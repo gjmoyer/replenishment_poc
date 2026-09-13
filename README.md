@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/gjmoyer/replenishment_poc/actions/workflows/ci.yml/badge.svg)](https://github.com/gjmoyer/replenishment_poc/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/gjmoyer/replenishment_poc/actions/workflows/codeql.yml/badge.svg)](https://github.com/gjmoyer/replenishment_poc/actions/workflows/codeql.yml)
-[![codecov](https://codecov.io/gh/gjmoyer/replenishment_poc/branch/main/graph/badge.svg)](https://codecov.io/gh/gjmoyer/replenishment_poc)
+[![coverage](https://img.shields.io/badge/coverage-76%25-brightgreen)](#engineering-practices)
 [![Python 3.12 | 3.13](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)](https://www.python.org/)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![License: MIT](https://img.shields.io/github/license/gjmoyer/replenishment_poc)](LICENSE)
