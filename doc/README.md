@@ -13,6 +13,8 @@ Split requirements for AI consumption. Read only what you need for the task.
 | `06-architecture-techstack.md` | Services, Docker Compose, run modes, observability | Scaffolding repo, DevOps |
 | `07-milestones-acceptance.md` | Build order, acceptance tests, demo script | Planning, verifying done |
 | `08-dashboard-guide.md` | How to operate the monitor (bars, cards, queue, demo run) | Using the dashboard, giving a demo |
+| `09-simulation-realism.md` | What is knowledge vs invented, calibration worksheet, retune rules | Changing demand, calibrating to real data |
+| `10-session-log.md` | Decisions, incidents, critic history, landmines, resume steps | Resuming work cold, debugging déjà-vu |
 
 ## Conventions
 
