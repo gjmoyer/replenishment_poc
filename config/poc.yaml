@@ -1,0 +1,19 @@
+llm:
+  provider: lmstudio
+  # Local dev (native LM Studio on Mac): 127.0.0.1
+  # From inside Docker Compose: http://host.docker.internal:8081/v1
+  base_url: "http://127.0.0.1:8081/v1"
+  model: "qwen2.5-7b-instruct-mlx"
+  timeout_s: 30
+  temperature: 0.2
+  max_tokens: 300
+  prompt_version: "v1"
+
+sim:
+  seed: 42
+  day: { open: "07:00", close: "22:00" }
+  trucks: ["10:30", "14:00"]
+  associate_delay_min: 25
+  stores:
+    - { store_id: "store-001", name: "Downtown", rate_mult: 1.2 }
+    - { store_id: "store-002", name: "Suburb", rate_mult: 0.9 }

@@ -1,0 +1,107 @@
+services:
+  redpanda:
+    image: redpandadata/redpanda:latest
+    container_name: poc-redpanda
+    command:
+      - redpanda start --overprovisioned --smp 1 --memory 1G --reserve-memory 0M
+        --node-id 0 --check=false
+        --kafka-addr PLAINTEXT://0.0.0.0:9092
+        --advertise-kafka-addr PLAINTEXT://redpanda:9092
+    ports:
+      - "9092:9092"
+    volumes:
+      - redpanda:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  postgres:
+    image: postgres:18
+    container_name: poc-postgres
+    environment:
+      POSTGRES_USER: poc
+      POSTGRES_PASSWORD: poc
+      POSTGRES_DB: poc
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./postgres_init.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U poc"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  decision:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    container_name: poc-decision
+    command: ["/app/.venv/bin/python", "-m", "decision.service"]
+    environment:
+      KAFKA_BROKER: redpanda:9092
+      DATABASE_URL: postgresql://poc:poc@postgres:5432/poc
+      LLM_REASONER_URL: http://llm:8000
+      LLM_TIMEOUT_S: "30"
+    depends_on:
+      redpanda:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+
+  llm:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    container_name: poc-llm
+    command: ["/app/.venv/bin/python", "-m", "uvicorn", "llm.service:app",
+              "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      # LM Studio runs natively on the Mac host (Metal). Docker Desktop
+      # resolves host.docker.internal to the host.
+      LLM_BASE_URL: http://host.docker.internal:8081/v1
+    ports:
+      - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  sim:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    container_name: poc-sim
+    command: ["/app/.venv/bin/python", "-m", "sim.runner"]
+    environment:
+      KAFKA_BROKER: redpanda:9092
+      DATABASE_URL: postgresql://poc:poc@postgres:5432/poc
+    depends_on:
+      redpanda:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+
+  dashboard:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    container_name: poc-dashboard
+    command: ["/app/.venv/bin/python", "-m", "streamlit", "run", "dashboard/app.py",
+              "--server.port=8501", "--server.address=0.0.0.0",
+              "--server.headless=true"]
+    environment:
+      KAFKA_BROKER: redpanda:9092
+      DATABASE_URL: postgresql://poc:poc@postgres:5432/poc
+    ports:
+      - "8501:8501"
+    depends_on:
+      redpanda:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redpanda:

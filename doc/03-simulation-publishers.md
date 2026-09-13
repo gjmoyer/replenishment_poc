@@ -1,0 +1,62 @@
+# 03 — Simulation Publishers (Shoppers + Trucks + Clock)
+
+## Goal
+Run a believable 07:00–22:00 day across 2–3 stores, sped up, with visible restock events on demand.
+
+## Sim clock
+- Central `SimClock` service owns sim time. All publishers query it; all events stamp `sim_ts` from it.
+- Speeds: `30x` (30 wall-min/day), `60x` default (15 wall-min/day), `120x` (~7.5 wall-min/day). Plus `pause / step +15 sim-min / seek`.
+- Tick: 1 sim-minute per tick. At 60x, tick every 1 wall-second.
+- Deterministic seed per run (`--seed 42`) so demos are repeatable.
+
+## Shopper publisher (per store)
+Poisson-ish arrivals per sim-minute with day curve:
+
+```
+base_rate (baskets/min): 07-09: 1.5, 09-12: 3.0, 12-14: 4.5 (lunch),
+14-17: 3.5, 17-19: 5.5 (peak), 19-22: 2.5
+```
+
+Per basket: pick 1–4 SKUs weighted by SKU `popularity` + promo boost (`is_promo` × 2.2 during peak) + noise. Each unit decrements BOH by 1 and emits one `boh_updates` (batch multi-unit as single delta for simplicity, or one event per unit — config flag, default batched).
+
+SKU catalog for POC (per store, tweakable):
+- `milk-1gal-001` — normal, capacity 24, case 6, popularity high, steady.
+- `soda-12pk-101` — promo, capacity 48, case 12, promo 1.5x capacity, spiky.
+- `dogfood-40lb-007` — bulk, capacity 6, case 2, popularity low but each sale hurts.
+- `bread-loaf-003` — normal, capacity 30, case 10, morning-heavy.
+- `eggs-12ct-005` — normal, capacity 36, case 12, morning-heavy.
+- 15–45 more filler SKUs with randomized params for scale testing.
+
+Each store gets a different seed + rate multiplier (e.g. Downtown 1.2x, Suburb 0.9x) so dashboards diverge.
+
+## Receipt / BOH-increase publisher
+Models backroom replenishment from DC, separate from shelf restocking:
+- Scheduled receipts at 08:00 + 15:00 sim (configurable): pick 3–5 SKUs, `BOH += case_size * N`.
+- Emits `boh_updates` with `reason=receipt`, `delta>0`.
+
+This must NOT auto-fill shelf — shelf only fills on associate confirmation. Tests that distinction.
+
+## Truck publisher
+- Fixed trucks: 10:30 + 14:00 sim per store (configurable), plus a `Send truck now` dashboard button that injects an ad-hoc `truck_arrivals` with chosen SKUs.
+- Manifest always includes any SKU with `zero_flag=true` at that store (to demo silent-OOS rescue) + 2 random SKUs.
+- Ad-hoc button is how the user "triggers restock events" on demand during demo.
+- After manifest, schedule matching `receipt` BOH increases within +5–15 sim-min (models dock-to-backroom delay) so `truck_zero` tasks can compute real cases.
+
+## Scenario presets (one-click)
+- `promo-rush`: 18:00 peak + promo boost 3x → promo exception path.
+- `bulk-thrash-test`: dog food popularity 3x for 2 sim-hours → proves debounce suppresses.
+- `silent-oos`: force one SKU to zero at 13:00 with no further sales → only truck at 14:00 rescues it.
+- `receipt-spike`: large BOH increase mid-day → tests receipt vs shelf distinction.
+
+## Config
+```yaml
+seed: 42
+speed: 60
+stores: [store-001, store-002]
+day: {open: "07:00", close: "22:00"}
+trucks: ["10:30", "14:00"]
+scenarios: []
+```
+
+## Acceptance for this slice
+With seed 42 at 60x: Downtown hits ≥3 normal tasks before noon, ≥1 promo task, dog food fires ≤3 tasks all day (debounced), silent-OOS SKU only clears after truck + manual restock.
