@@ -6,6 +6,7 @@ GET  /health  -> {status, model, prompt_version}
 Config: core.config (config/poc.yaml + LLM_* env). Pure helpers
 (extract_json, clamp_decision) are unit-tested without a model.
 """
+
 from __future__ import annotations
 
 import hashlib

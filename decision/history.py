@@ -21,6 +21,7 @@ Tuesday morning, even at identical shelf readings):
     fires ~once a day) can't afford hard weekday matching — a Tuesday
     precedent still beats no precedent on Saturday.
 """
+
 from __future__ import annotations
 
 GOOD_OUTCOMES = frozenset({"done", "suppressed_ok"})
@@ -85,8 +86,9 @@ def _format(candidate: dict) -> dict:
     """Project a candidate row onto the PastCase schema keys."""
     return {
         "shelf_est": int(candidate.get("shelf_est", 0)),
-        "effective_capacity": int(candidate.get("effective_cap",
-                                   candidate.get("effective_capacity", 1)) or 1),
+        "effective_capacity": int(
+            candidate.get("effective_cap", candidate.get("effective_capacity", 1)) or 1
+        ),
         "boh": int(candidate.get("boh", 0)),
         "velocity_30m": float(candidate.get("velocity_30m", 0.0)),
         "velocity_120m": float(candidate.get("velocity_120m", 0.0)),

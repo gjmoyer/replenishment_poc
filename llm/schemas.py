@@ -1,4 +1,5 @@
 """Pydantic contracts for the LLM reasoner. Mirrors doc/04-llm-reasoner.md."""
+
 from __future__ import annotations
 
 from typing import Annotated, Literal
@@ -52,8 +53,9 @@ class PastCase(BaseModel):
     # differ — a Saturday-evening precedent means more on a Saturday.
     weekday: str = Field(default="?")
     needs_restock: bool
-    outcome: Literal["done", "adjusted", "rejected", "abandoned",
-                     "suppressed_ok", "suppressed_regret"]
+    outcome: Literal[
+        "done", "adjusted", "rejected", "abandoned", "suppressed_ok", "suppressed_regret"
+    ]
     rationale: str = Field(min_length=1, max_length=200)
 
     @field_validator("rationale", mode="before")

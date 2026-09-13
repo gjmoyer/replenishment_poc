@@ -1,4 +1,5 @@
 """Postgres persistence for the decision service + dashboard reads."""
+
 from __future__ import annotations
 
 import json
@@ -8,15 +9,21 @@ from typing import Any
 
 log = logging.getLogger("decision.pg")
 
-DAY_TABLES = ("sales_hist", "tasks", "events", "shelf_state", "lost_sales",
-              # llm_calls is deliberately NOT a day table: it is the persistent
-              # feedback-loop history (doc/04). ~10s of rows/day, so no prune
-              # job at POC scale. Outcomes are materialized into each row by
-              # finalize_llm_outcomes() before the day tables are truncated.
-              # processed is safe to wipe on restart: the epoch fence runs BEFORE
-              # claim_event, so redelivered old-epoch messages are dropped without
-              # needing their ids; same-day recreates never truncate.
-              "processed")
+DAY_TABLES = (
+    "sales_hist",
+    "tasks",
+    "events",
+    "shelf_state",
+    "lost_sales",
+    # llm_calls is deliberately NOT a day table: it is the persistent
+    # feedback-loop history (doc/04). ~10s of rows/day, so no prune
+    # job at POC scale. Outcomes are materialized into each row by
+    # finalize_llm_outcomes() before the day tables are truncated.
+    # processed is safe to wipe on restart: the epoch fence runs BEFORE
+    # claim_event, so redelivered old-epoch messages are dropped without
+    # needing their ids; same-day recreates never truncate.
+    "processed",
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS shelf_state (
@@ -206,9 +213,13 @@ class Store:
     def add_llm_call(self, call: dict) -> int | None:
         """Persist one reasoner call. Returns the row id (for task linking)."""
         row = {
-            "sim_min": 0, "epoch": 1, "needs_restock": False,
-            "task_id": None, "input": None,
-            "outcome": None, "outcome_sim_min": None,
+            "sim_min": 0,
+            "epoch": 1,
+            "needs_restock": False,
+            "task_id": None,
+            "input": None,
+            "outcome": None,
+            "outcome_sim_min": None,
             "outcome_units": None,
             **call,
         }
@@ -268,14 +279,22 @@ class Store:
                         snap = json.loads(snap)
                     except ValueError:
                         snap = {}
-                out.append({**snap, "needs_restock": row["needs_restock"],
-                            "outcome": row["outcome"],
-                            "sim_min": row["sim_min"],
-                            "rationale": row["rationale"] or ""})
+                out.append(
+                    {
+                        **snap,
+                        "needs_restock": row["needs_restock"],
+                        "outcome": row["outcome"],
+                        "sim_min": row["sim_min"],
+                        "rationale": row["rationale"] or "",
+                    }
+                )
             return out
 
     def set_llm_outcome(
-        self, task_id: str, outcome: str, sim_min: int,
+        self,
+        task_id: str,
+        outcome: str,
+        sim_min: int,
         units: int | None = None,
     ) -> None:
         """Label a call by its linked task. First label wins (terminal)."""
@@ -295,6 +314,7 @@ class Store:
         truncation, legacy rows stay NULL and are excluded from metrics.
         """
         from decision.feedback import REGRET_WINDOW_MAX, REGRET_WINDOW_MIN
+
         with self.conn.cursor() as cur:
             # Restock path: adopt the terminal task status. done/rejected
             # were set online with finer labels (done vs adjusted); anything
@@ -323,8 +343,7 @@ class Store:
                          (c.output->>'suppress_until_min')::int, 0), %s), %s)
                    WHERE c.task_id IS NULL AND c.outcome IS NULL
                      AND c.sim_min > 0""",
-                (REGRET_WINDOW_MIN, REGRET_WINDOW_MAX,
-                 REGRET_WINDOW_MIN, REGRET_WINDOW_MAX),
+                (REGRET_WINDOW_MIN, REGRET_WINDOW_MAX, REGRET_WINDOW_MIN, REGRET_WINDOW_MAX),
             )
             cur.execute(
                 """UPDATE llm_calls
@@ -356,8 +375,17 @@ class Store:
                 " day_done, flags FROM sim_control WHERE id=1"
             )
             r = cur.fetchone()
-            keys = ("sim_min", "paused", "speed", "seed", "epoch", "cmd",
-                    "cmd_arg", "day_done", "flags")
+            keys = (
+                "sim_min",
+                "paused",
+                "speed",
+                "seed",
+                "epoch",
+                "cmd",
+                "cmd_arg",
+                "day_done",
+                "flags",
+            )
             return dict(zip(keys, r, strict=True))
 
     def truncate_day(self) -> None:

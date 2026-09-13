@@ -1,5 +1,6 @@
 """Scenario flags: one-click demo modifiers (doc/03). Composable; all default off
 except silent_oos, which the M2 replay needs for the truck-rescue assertion."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -33,8 +34,9 @@ class ScenarioFlags:
     silent_drain_min: int = SILENT_DRAIN_MIN
 
 
-def profile_mult(profile: str, minute: int, flags: ScenarioFlags,
-                 is_promo: bool = False, is_bulk: bool = False) -> float:
+def profile_mult(
+    profile: str, minute: int, flags: ScenarioFlags, is_promo: bool = False, is_bulk: bool = False
+) -> float:
     """Time-of-day weight multiplier for a SKU profile."""
     if profile == "morning":
         m = MORNING_BOOST if minute < MORNING_CUTOFF_MIN else MORNING_OFF
@@ -56,8 +58,4 @@ def profile_mult(profile: str, minute: int, flags: ScenarioFlags,
 
 def muted(sku: str, minute: int, flags: ScenarioFlags) -> bool:
     """Silent-OOS SKU gets no demand after its drain minute."""
-    return (
-        flags.silent_oos
-        and sku == flags.silent_sku
-        and minute >= flags.silent_drain_min
-    )
+    return flags.silent_oos and sku == flags.silent_sku and minute >= flags.silent_drain_min

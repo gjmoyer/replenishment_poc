@@ -7,6 +7,7 @@ converts clock times.
 Quantity math lives HERE. The LLM (doc/04) may only advise reduce/delay;
 its output always passes back through cases_needed() + clamp.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -82,9 +83,11 @@ def priority_of(state: ShelfState, reason_code: str) -> int:
         return PRIORITY_NOW
     if state.is_bulk:
         return PRIORITY_ROUTINE  # debounce-gated by design, never urgent
-    if (state.cover_trigger_min is not None and state.velocity_30m > 0
-            and cover_min(state.shelf_est, state.velocity_30m)
-            < state.cover_trigger_min):
+    if (
+        state.cover_trigger_min is not None
+        and state.velocity_30m > 0
+        and cover_min(state.shelf_est, state.velocity_30m) < state.cover_trigger_min
+    ):
         return PRIORITY_SOON
     return PRIORITY_ROUTINE
 
@@ -197,8 +200,7 @@ def evaluate(state: ShelfState, now_min: int) -> Decision:
                 _finalize_task(
                     state,
                     "zero_fetch",
-                    f"shelf empty, backroom {state.boh} units covers a fetch"
-                    " — no truck needed.",
+                    f"shelf empty, backroom {state.boh} units covers a fetch — no truck needed.",
                 ),
                 state,
             )

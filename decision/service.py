@@ -7,6 +7,7 @@ any reasoner failure falls back to rules without blocking tasks.
 
 Run: python -m decision.service
 """
+
 from __future__ import annotations
 
 import logging
@@ -107,11 +108,16 @@ class Brain:
                 "SELECT store_id, sku, boh, shelf_est, effective_cap, case_size,"
                 " zero_flag, zero_since_min, last_task_min FROM shelf_state"
             )
-            for (sid, sku, boh, shelf_est, cap, case, zf, zsince, last) in cur.fetchall():
+            for sid, sku, boh, shelf_est, cap, case, zf, zsince, last in cur.fetchall():
                 key = (sid, sku)
                 self.shelf[key] = MutableShelf(
-                    boh=boh, shelf_est=shelf_est, effective_cap=cap,
-                    case_size=case, zero_flag=zf, zero_since_min=zsince)
+                    boh=boh,
+                    shelf_est=shelf_est,
+                    effective_cap=cap,
+                    case_size=case,
+                    zero_flag=zf,
+                    zero_since_min=zsince,
+                )
                 self.sales_ts[key] = deque()
                 if last is not None:
                     self.last_emit[key] = last
@@ -119,16 +125,19 @@ class Brain:
                 "SELECT store_id, sku, task_id, emit_sim_min, cases, reason"
                 " FROM tasks WHERE status='open'"
             )
-            for (sid, sku, tid, emit, cases, reason) in cur.fetchall():
+            for sid, sku, tid, emit, cases, reason in cur.fetchall():
                 key = (sid, sku)
                 if key in self.shelf:
                     self.open[key] = {
-                        "task_id": tid, "emit_min": emit, "cases": cases,
-                        "reason": reason, "shelf_at_emit": self.shelf[key].shelf_est}
+                        "task_id": tid,
+                        "emit_min": emit,
+                        "cases": cases,
+                        "reason": reason,
+                        "shelf_at_emit": self.shelf[key].shelf_est,
+                    }
                     self.last_emit[key] = emit
             cur.execute(
-                "SELECT store_id, max(sim_min) FROM events WHERE type='truck'"
-                " GROUP BY store_id"
+                "SELECT store_id, max(sim_min) FROM events WHERE type='truck' GROUP BY store_id"
             )
             for sid, m in cur.fetchall():
                 self.last_truck[sid] = m
@@ -144,8 +153,7 @@ class Brain:
             # velocities rebuild from history; without this the promo guard
             # misfires (v30=0) for up to 2h after every recreate.
             cur.execute(
-                "SELECT store_id, sku, sim_min, units FROM sales_hist"
-                " WHERE sim_min > %s",
+                "SELECT store_id, sku, sim_min, units FROM sales_hist WHERE sim_min > %s",
                 (self.last_now - 120,),
             )
             for sid, sku, m, units in cur.fetchall():
@@ -163,11 +171,13 @@ class Brain:
                 key = (st.store_id, s.sku)
                 cap = effective_capacity(s.shelf_capacity_units, s.is_promo)
                 self.shelf[key] = MutableShelf(
-                    boh=s.opening_boh, shelf_est=cap,
-                    effective_cap=cap, case_size=s.case_size_units,
+                    boh=s.opening_boh,
+                    shelf_est=cap,
+                    effective_cap=cap,
+                    case_size=s.case_size_units,
                 )
                 self.sales_ts[key] = deque()
-                self.persist(key, self.max_sim, None)
+                self.persist(key, self.max_sim.get(key, 0), None)
 
     def reset(self, epoch: int) -> None:
         log.info("epoch %s -> %s, clearing live state", self.epoch, epoch)
@@ -200,15 +210,24 @@ class Brain:
         store_id, sku = key
         m, s = self.shelf[key], skus[sku]
         v30, v120 = self.velocities(key, now)
-        self.store.upsert_shelf({
-            "store_id": store_id, "sku": sku, "boh": m.boh,
-            "shelf_est": m.shelf_est, "effective_cap": m.effective_cap,
-            "case_size": s.case_size_units, "is_promo": s.is_promo,
-            "is_bulk": s.is_bulk, "velocity_30m": v30, "velocity_120m": v120,
-            "zero_flag": m.zero_flag, "zero_since_min": m.zero_since_min,
-            "last_task_min": self.last_emit.get(key),
-            "open_task": open_task,
-        })
+        self.store.upsert_shelf(
+            {
+                "store_id": store_id,
+                "sku": sku,
+                "boh": m.boh,
+                "shelf_est": m.shelf_est,
+                "effective_cap": m.effective_cap,
+                "case_size": s.case_size_units,
+                "is_promo": s.is_promo,
+                "is_bulk": s.is_bulk,
+                "velocity_30m": v30,
+                "velocity_120m": v120,
+                "zero_flag": m.zero_flag,
+                "zero_since_min": m.zero_since_min,
+                "last_task_min": self.last_emit.get(key),
+                "open_task": open_task,
+            }
+        )
 
     def snapshot(self, key: tuple[str, str], now: int) -> ShelfState:
         from sim.catalog import ALL_SKUS
@@ -217,20 +236,27 @@ class Brain:
         m, s = self.shelf[key], skus[key[1]]
         v30, v120 = self.velocities(key, now)
         return ShelfState(
-            boh=m.boh, shelf_est=m.shelf_est,
+            boh=m.boh,
+            shelf_est=m.shelf_est,
             shelf_capacity_units=s.shelf_capacity_units,
-            case_size=s.case_size_units, is_promo=s.is_promo, is_bulk=s.is_bulk,
-            threshold_pct=s.threshold_pct, velocity_30m=v30, velocity_120m=v120,
+            case_size=s.case_size_units,
+            is_promo=s.is_promo,
+            is_bulk=s.is_bulk,
+            threshold_pct=s.threshold_pct,
+            velocity_30m=v30,
+            velocity_120m=v120,
             last_task_min=self.last_emit.get(key),
             has_open_task=key in self.open,
-            zero_flag=m.zero_flag, zero_since_min=m.zero_since_min,
+            zero_flag=m.zero_flag,
+            zero_since_min=m.zero_since_min,
             cover_trigger_min=self.cfg.sim.associate_delay_min + 20,
         )
 
     # -- task emission ----------------------------------------------------
 
-    def emit_task(self, key: tuple[str, str], now: int, outcome: RoutedOutcome,
-                  reason_code: str) -> str:
+    def emit_task(
+        self, key: tuple[str, str], now: int, outcome: RoutedOutcome, reason_code: str
+    ) -> str:
         """Emit (or refresh) the open task. Returns the owning task_id."""
         if key in self.open:  # one open task max: refresh, never duplicate
             self.refresh_open(key, now, outcome, reason_code)
@@ -242,8 +268,13 @@ class Brain:
         m = self.shelf[key]
         task_id = uuid.uuid4().hex[:12]
         priority = priority_of(self.snapshot(key, now), reason_code)
-        entry = {"task_id": task_id, "emit_min": now, "cases": outcome.cases,
-                 "reason": reason_code, "shelf_at_emit": m.shelf_est}
+        entry = {
+            "task_id": task_id,
+            "emit_min": now,
+            "cases": outcome.cases,
+            "reason": reason_code,
+            "shelf_at_emit": m.shelf_est,
+        }
         self.open[key] = entry
         self.last_emit[key] = now
         if outcome.source == "rule":
@@ -258,20 +289,32 @@ class Brain:
         else:
             rationale = outcome.rationale
         task = {
-            "task_id": task_id, "store_id": store_id, "sku": sku,
-            "emit_sim_min": now, "action": "task", "reason": reason_code,
-            "cases": outcome.cases, "source": outcome.source,
-            "rationale": rationale, "confidence": outcome.confidence,
-            "status": "open", "priority": priority,
-            "shelf_at_emit": m.shelf_est, "boh_at_emit": m.boh,
+            "task_id": task_id,
+            "store_id": store_id,
+            "sku": sku,
+            "emit_sim_min": now,
+            "action": "task",
+            "reason": reason_code,
+            "cases": outcome.cases,
+            "source": outcome.source,
+            "rationale": rationale,
+            "confidence": outcome.confidence,
+            "status": "open",
+            "priority": priority,
+            "shelf_at_emit": m.shelf_est,
+            "boh_at_emit": m.boh,
         }
         self.store.add_task(task)
         self.producer.send("restock_tasks", f"{store_id}:{sku}", task)
         loc = "endcap+aisle" if skus[sku].is_promo else "aisle"
-        self.store.log_event(now, store_id, sku, "task",
-                             f"P{priority} fetch {outcome.cases} cases ({loc})"
-                             f" [{reason_code}]",
-                             outcome.source)
+        self.store.log_event(
+            now,
+            store_id,
+            sku,
+            "task",
+            f"P{priority} fetch {outcome.cases} cases ({loc}) [{reason_code}]",
+            outcome.source,
+        )
         self.persist(key, now, {"task_id": task_id, "cases": outcome.cases})
         return task_id
 
@@ -282,11 +325,17 @@ class Brain:
         task_id = uuid.uuid4().hex[:12]
         self.checks[key] = {"task_id": task_id, "emit_min": now}
         task = {
-            "task_id": task_id, "store_id": store_id, "sku": sku,
-            "emit_sim_min": now, "action": "check", "reason": reason,
-            "cases": 0, "source": "rule",
+            "task_id": task_id,
+            "store_id": store_id,
+            "sku": sku,
+            "emit_sim_min": now,
+            "action": "check",
+            "reason": reason,
+            "cases": 0,
+            "source": "rule",
             "rationale": "Truck lists zero-shelf SKU; verify dock before fetch.",
-            "confidence": None, "status": "open",
+            "confidence": None,
+            "status": "open",
             "shelf_at_emit": self.shelf[key].shelf_est,
             "boh_at_emit": self.shelf[key].boh,
         }
@@ -297,8 +346,7 @@ class Brain:
 
     # -- routing -----------------------------------------------------------
 
-    def build_ctx(self, key: tuple[str, str], now: int, trigger: str,
-                  sim_ts: str) -> ReasonContext:
+    def build_ctx(self, key: tuple[str, str], now: int, trigger: str, sim_ts: str) -> ReasonContext:
         from sim.catalog import ALL_SKUS
 
         skus = {s.sku: s for s in ALL_SKUS}
@@ -307,13 +355,25 @@ class Brain:
         v30, v120 = self.velocities(key, now)
         o = self.open.get(key)
         return ReasonContext(
-            store_id=store_id, sku=sku, sim_ts=sim_ts, boh=m.boh,
-            shelf_est=m.shelf_est, effective_cap=m.effective_cap,
-            case_size=s.case_size_units, is_promo=s.is_promo, is_bulk=s.is_bulk,
-            threshold_pct=s.threshold_pct, velocity_30m=v30, velocity_120m=v120,
-            trigger=trigger, recent_sales=self.recent_units(key, now),
-            open_task=({"task_id": o["task_id"], "cases": o["cases"],
-                        "emit_min": o["emit_min"]} if o else None),
+            store_id=store_id,
+            sku=sku,
+            sim_ts=sim_ts,
+            boh=m.boh,
+            shelf_est=m.shelf_est,
+            effective_cap=m.effective_cap,
+            case_size=s.case_size_units,
+            is_promo=s.is_promo,
+            is_bulk=s.is_bulk,
+            threshold_pct=s.threshold_pct,
+            velocity_30m=v30,
+            velocity_120m=v120,
+            trigger=trigger,
+            recent_sales=self.recent_units(key, now),
+            open_task=(
+                {"task_id": o["task_id"], "cases": o["cases"], "emit_min": o["emit_min"]}
+                if o
+                else None
+            ),
             truck_eta=None,
         )
 
@@ -337,9 +397,16 @@ class Brain:
             return []
         return [by_min.get(m, 0) for m in range(now - 10, now)]
 
-    def _record_llm(self, key: tuple[str, str], now: int, ctx: ReasonContext,
-                      decision: Decision, outcome: RoutedOutcome,
-                      record: dict | None, task_id: str | None) -> None:
+    def _record_llm(
+        self,
+        key: tuple[str, str],
+        now: int,
+        ctx: ReasonContext,
+        decision: Decision,
+        outcome: RoutedOutcome,
+        record: dict | None,
+        task_id: str | None,
+    ) -> None:
         """Persist one reasoner call with join keys for the feedback loop.
 
         task_id links restock verdicts to their task row (outcomes land via
@@ -350,33 +417,41 @@ class Brain:
             return
         from decision.history import weekday_of
 
-        record.update({
-            "sim_min": now,
-            "epoch": self.epoch,
-            "needs_restock": bool(record["output"].get(
-                "needs_restock", outcome.action == "task")),
-            "task_id": task_id,
-            "input": {
-                "shelf_est": ctx.shelf_est, "boh": ctx.boh,
-                "effective_cap": ctx.effective_cap,
-                "case_size": ctx.case_size,
-                "threshold_pct": ctx.threshold_pct,
-                "is_promo": ctx.is_promo, "is_bulk": ctx.is_bulk,
-                "velocity_30m": ctx.velocity_30m,
-                "velocity_120m": ctx.velocity_120m,
-                "recent_sales": list(ctx.recent_sales),
-                "has_open_task": ctx.open_task is not None,
-                "rule_cases": decision.cases,
-                "rule_reason": decision.reason_code,
+        record.update(
+            {
                 "sim_min": now,
-                "weekday": weekday_of(ctx.sim_ts),
-            },
-        })
+                "epoch": self.epoch,
+                "needs_restock": bool(
+                    record["output"].get("needs_restock", outcome.action == "task")
+                ),
+                "task_id": task_id,
+                "input": {
+                    "shelf_est": ctx.shelf_est,
+                    "boh": ctx.boh,
+                    "effective_cap": ctx.effective_cap,
+                    "case_size": ctx.case_size,
+                    "threshold_pct": ctx.threshold_pct,
+                    "is_promo": ctx.is_promo,
+                    "is_bulk": ctx.is_bulk,
+                    "velocity_30m": ctx.velocity_30m,
+                    "velocity_120m": ctx.velocity_120m,
+                    "recent_sales": list(ctx.recent_sales),
+                    "has_open_task": ctx.open_task is not None,
+                    "rule_cases": decision.cases,
+                    "rule_reason": decision.reason_code,
+                    "sim_min": now,
+                    "weekday": weekday_of(ctx.sim_ts),
+                },
+            }
+        )
         call_id = self.store.add_llm_call(record)
         if task_id is not None and call_id is not None:
             self.store.link_llm_task(call_id, task_id)
         self.store.log_event(
-            now, key[0], key[1], "llm",
+            now,
+            key[0],
+            key[1],
+            "llm",
             f"{ctx.trigger}: restock={record['output'].get('needs_restock')} "
             f"conf={record['output'].get('confidence')}",
             outcome.source,
@@ -391,8 +466,7 @@ class Brain:
         if self.cfg.llm.history_cases <= 0:
             return []
         try:
-            candidates = self.store.recent_labeled_calls(
-                ctx.trigger, self.cfg.llm.history_pool)
+            candidates = self.store.recent_labeled_calls(ctx.trigger, self.cfg.llm.history_pool)
         except Exception as e:
             log.warning("history retrieval failed: %r", e)
             return []
@@ -400,17 +474,23 @@ class Brain:
             from decision.history import pick_cases, weekday_of
 
             return pick_cases(
-                {"shelf_est": ctx.shelf_est, "effective_cap": ctx.effective_cap,
-                 "boh": ctx.boh, "velocity_30m": ctx.velocity_30m,
-                 "velocity_120m": ctx.velocity_120m,
-                 "sim_min": now, "weekday": weekday_of(ctx.sim_ts)},
-                candidates, self.cfg.llm.history_cases)
+                {
+                    "shelf_est": ctx.shelf_est,
+                    "effective_cap": ctx.effective_cap,
+                    "boh": ctx.boh,
+                    "velocity_30m": ctx.velocity_30m,
+                    "velocity_120m": ctx.velocity_120m,
+                    "sim_min": now,
+                    "weekday": weekday_of(ctx.sim_ts),
+                },
+                candidates,
+                self.cfg.llm.history_cases,
+            )
         except Exception as e:
             log.warning("history selection failed: %r", e)
             return []
 
-    def _route_with_history(self, decision: Decision, ctx: ReasonContext,
-                            now: int) -> tuple:
+    def _route_with_history(self, decision: Decision, ctx: ReasonContext, now: int) -> tuple:
         """route() with precedent attached — but only on cache miss.
 
         past_cases is excluded from the cache bucket, so identical states
@@ -421,8 +501,9 @@ class Brain:
             ctx.past_cases = self._history_for(ctx, now)
         return route(decision, ctx, now, self.cache, self.timeout_s)
 
-    def apply_routed(self, key: tuple[str, str], now: int, decision: Decision,
-                     ctx: ReasonContext) -> None:
+    def apply_routed(
+        self, key: tuple[str, str], now: int, decision: Decision, ctx: ReasonContext
+    ) -> None:
         outcome, record = self._route_with_history(decision, ctx, now)
         if outcome.action == "task":
             task_id = self.emit_task(key, now, outcome, decision.reason_code)
@@ -432,15 +513,21 @@ class Brain:
         if outcome.action in ("suppress", "no_action"):
             if outcome.suppress_until_min:
                 self.suppress_until[key] = now + outcome.suppress_until_min
-            prev = self.last_suppress_log.get((key[0], key[1], decision.reason_code), -10**9)
+            prev = self.last_suppress_log.get((key[0], key[1], decision.reason_code), -(10**9))
             if now - prev >= 30:  # log transitions, not every tick
                 self.last_suppress_log[(key[0], key[1], decision.reason_code)] = now
-                self.store.log_event(now, key[0], key[1], "suppress",
-                                     f"{decision.reason_code}: {outcome.rationale[:160]}",
-                                     outcome.source)
+                self.store.log_event(
+                    now,
+                    key[0],
+                    key[1],
+                    "suppress",
+                    f"{decision.reason_code}: {outcome.rationale[:160]}",
+                    outcome.source,
+                )
 
-    def route_with_repeat_check(self, key: tuple[str, str], now: int,
-                                decision: Decision, sim_ts: str) -> None:
+    def route_with_repeat_check(
+        self, key: tuple[str, str], now: int, decision: Decision, sim_ts: str
+    ) -> None:
         """repeat_task trigger: open task exists and shelf fell >=1 case since emit.
 
         A repeat outcome REFRESHES the open entry (cases/rationale) — it never
@@ -454,24 +541,33 @@ class Brain:
             fell = o["shelf_at_emit"] - self.shelf[key].shelf_est
             if fell >= REPEAT_DROP_CASES * skus[key[1]].case_size_units:
                 forced = Decision(
-                    action="task", reason_code=decision.reason_code,
-                    cases=decision.cases, detail=decision.detail,
-                    llm_candidate=True, llm_trigger="repeat_task",
+                    action="task",
+                    reason_code=decision.reason_code,
+                    cases=decision.cases,
+                    detail=decision.detail,
+                    llm_candidate=True,
+                    llm_trigger="repeat_task",
                 )
                 ctx = self.build_ctx(key, now, "repeat_task", sim_ts)
                 outcome, record = self._route_with_history(forced, ctx, now)
                 if outcome.action == "task":
                     self.refresh_open(key, now, outcome, decision.reason_code)
-                    self._record_llm(key, now, ctx, forced, outcome, record,
-                                     o["task_id"])
+                    self._record_llm(key, now, ctx, forced, outcome, record, o["task_id"])
                 else:
-                    self._record_llm(key, now, ctx, forced, outcome, record,
-                                     None)
+                    self._record_llm(key, now, ctx, forced, outcome, record, None)
                 return
-            self.refresh_open(key, now, RoutedOutcome(
-                action="task", reason_code=decision.reason_code,
-                cases=decision.cases, source="rule",
-                rationale=decision.detail), decision.reason_code)
+            self.refresh_open(
+                key,
+                now,
+                RoutedOutcome(
+                    action="task",
+                    reason_code=decision.reason_code,
+                    cases=decision.cases,
+                    source="rule",
+                    rationale=decision.detail,
+                ),
+                decision.reason_code,
+            )
             return
         if decision.action == "task":
             ctx = self.build_ctx(key, now, decision.llm_trigger or "promo_ambiguous", sim_ts)
@@ -485,8 +581,9 @@ class Brain:
             ctx = self.build_ctx(key, now, decision.llm_trigger or "promo_ambiguous", sim_ts)
             self.apply_routed(key, now, decision, ctx)
 
-    def refresh_open(self, key: tuple[str, str], now: int,
-                     outcome: RoutedOutcome, reason_code: str) -> None:
+    def refresh_open(
+        self, key: tuple[str, str], now: int, outcome: RoutedOutcome, reason_code: str
+    ) -> None:
         """Update the existing open task in place (no duplicate task_id).
 
         Refreshes quantity/source/confidence but keeps the ORIGINAL emit
@@ -497,14 +594,17 @@ class Brain:
         o["cases"] = outcome.cases
         with self.store.conn.cursor() as cur:
             cur.execute(
-                "UPDATE tasks SET cases=%s, source=%s,"
-                " confidence=%s WHERE task_id=%s",
-                (outcome.cases, outcome.source,
-                 outcome.confidence, o["task_id"]),
+                "UPDATE tasks SET cases=%s, source=%s, confidence=%s WHERE task_id=%s",
+                (outcome.cases, outcome.source, outcome.confidence, o["task_id"]),
             )
-        self.store.log_event(now, key[0], key[1], "task",
-                             f"refreshed to {outcome.cases} cases [{reason_code}]",
-                             outcome.source)
+        self.store.log_event(
+            now,
+            key[0],
+            key[1],
+            "task",
+            f"refreshed to {outcome.cases} cases [{reason_code}]",
+            outcome.source,
+        )
         self.persist(key, now, {"task_id": o["task_id"], "cases": outcome.cases})
 
     # -- topic handlers -----------------------------------------------------
@@ -575,24 +675,36 @@ class Brain:
             self.maybe_boh_anomaly(key, now, msg.get("sim_ts", ""), boh - old_boh)
             if key in self.checks:  # receipt may upgrade check -> task
                 d = evaluate_truck(
-                    zero_flag=m.zero_flag, boh=m.boh, shelf_est=m.shelf_est,
+                    zero_flag=m.zero_flag,
+                    boh=m.boh,
+                    shelf_est=m.shelf_est,
                     effective_cap=m.effective_cap,
                     case_size=skus[sku].case_size_units,
                 )
                 if d.action == "task":
                     chk = self.checks.pop(key)
                     self.store.set_task_status(chk["task_id"], "superseded")
-                    self.emit_task(key, now, RoutedOutcome(
-                        action="task", reason_code="truck_zero", cases=d.cases,
-                        source="rule", rationale=d.detail), "truck_zero")
+                    self.emit_task(
+                        key,
+                        now,
+                        RoutedOutcome(
+                            action="task",
+                            reason_code="truck_zero",
+                            cases=d.cases,
+                            source="rule",
+                            rationale=d.detail,
+                        ),
+                        "truck_zero",
+                    )
 
         decision = evaluate(self.snapshot(key, now), now)
         self.route_with_repeat_check(key, now, decision, msg.get("sim_ts", ""))
         self.persist(key, now, self.open.get(key))
         self.sweep_timeouts(now)
 
-    def maybe_boh_anomaly(self, key: tuple[str, str], now: int, sim_ts: str,
-                          receipt_units: int) -> None:
+    def maybe_boh_anomaly(
+        self, key: tuple[str, str], now: int, sim_ts: str, receipt_units: int
+    ) -> None:
         from sim.catalog import ALL_SKUS
 
         skus = {s.sku: s for s in ALL_SKUS}
@@ -601,13 +713,16 @@ class Brain:
             if receipt_units >= BOH_ANOMALY_CASES * skus[key[1]].case_size_units:
                 m = self.shelf[key]
                 decision = Decision(
-                    action="no_action", reason_code="boh_anomaly_note",
+                    action="no_action",
+                    reason_code="boh_anomaly_note",
                     detail=f"receipt +{receipt_units} units with no truck in "
-                           f"{BOH_ANOMALY_TRUCK_WINDOW}m (BOH now {m.boh}).",
-                    llm_candidate=True, llm_trigger="boh_anomaly",
+                    f"{BOH_ANOMALY_TRUCK_WINDOW}m (BOH now {m.boh}).",
+                    llm_candidate=True,
+                    llm_trigger="boh_anomaly",
                 )
-                self.apply_routed(key, now, decision,
-                                  self.build_ctx(key, now, "boh_anomaly", sim_ts))
+                self.apply_routed(
+                    key, now, decision, self.build_ctx(key, now, "boh_anomaly", sim_ts)
+                )
 
     def on_truck(self, msg: dict) -> None:
         try:
@@ -626,21 +741,32 @@ class Brain:
         from sim.catalog import ALL_SKUS
 
         skus = {s.sku: s for s in ALL_SKUS}
-        self.store.log_event(now, store_id, None, "truck",
-                             f"manifest: {', '.join(manifest)}", None)
+        self.store.log_event(now, store_id, None, "truck", f"manifest: {', '.join(manifest)}", None)
         for sku in manifest:
             key = (store_id, sku)
             if key not in self.shelf:
                 continue
             m = self.shelf[key]
             d = evaluate_truck(
-                zero_flag=m.zero_flag, boh=m.boh, shelf_est=m.shelf_est,
-                effective_cap=m.effective_cap, case_size=skus[sku].case_size_units,
+                zero_flag=m.zero_flag,
+                boh=m.boh,
+                shelf_est=m.shelf_est,
+                effective_cap=m.effective_cap,
+                case_size=skus[sku].case_size_units,
             )
             if d.action == "task":
-                self.emit_task(key, now, RoutedOutcome(
-                    action="task", reason_code="truck_zero", cases=d.cases,
-                    source="rule", rationale=d.detail), "truck_zero")
+                self.emit_task(
+                    key,
+                    now,
+                    RoutedOutcome(
+                        action="task",
+                        reason_code="truck_zero",
+                        cases=d.cases,
+                        source="rule",
+                        rationale=d.detail,
+                    ),
+                    "truck_zero",
+                )
             elif d.action == "check":
                 self.emit_check(key, now, "truck_zero")
         # Wake-up call: silent zeros NOT on the manifest still get a fresh
@@ -652,8 +778,7 @@ class Brain:
                 continue
             sim_ts = msg.get("sim_ts", "")
             key = (sid, sku)
-            self.route_with_repeat_check(
-                key, now, evaluate(self.snapshot(key, now), now), sim_ts)
+            self.route_with_repeat_check(key, now, evaluate(self.snapshot(key, now), now), sim_ts)
 
     def on_confirm(self, msg: dict) -> None:
         try:
@@ -674,8 +799,14 @@ class Brain:
             return  # redelivered confirm: never double-apply a refill
         if key not in self.shelf:
             return
-        log.info("confirm %s %s action=%s cases=%s task=%s",
-                 store_id, sku, action, cases, msg.get("task_id"))
+        log.info(
+            "confirm %s %s action=%s cases=%s task=%s",
+            store_id,
+            sku,
+            action,
+            cases,
+            msg.get("task_id"),
+        )
         self.last_now = max(self.last_now, now)
         asked_cases = cases  # associate intent, pre-BOH-clamp (feedback loop)
         if action != "reject":
@@ -692,8 +823,13 @@ class Brain:
             if cases > affordable:
                 if affordable <= 0:
                     self.store.log_event(
-                        now, store_id, sku, "confirm",
-                        f"held: BOH {self.shelf[key].boh} covers no case — send a truck", None)
+                        now,
+                        store_id,
+                        sku,
+                        "confirm",
+                        f"held: BOH {self.shelf[key].boh} covers no case — send a truck",
+                        None,
+                    )
                     self.persist(key, now, self.open.get(key))
                     return
                 log.info("confirm clamped %s -> %s cases (BOH cover)", cases, affordable)
@@ -705,8 +841,14 @@ class Brain:
             if o:
                 self.store.set_task_status(o["task_id"], "rejected")
                 self.store.set_llm_outcome(o["task_id"], "rejected", now)
-            self.store.log_event(now, store_id, sku, "confirm",
-                                 f"rejected by associate; quiet {REJECT_SUPPRESS_MIN}m", None)
+            self.store.log_event(
+                now,
+                store_id,
+                sku,
+                "confirm",
+                f"rejected by associate; quiet {REJECT_SUPPRESS_MIN}m",
+                None,
+            )
         else:
             self.shelf[key].apply_confirmation(cases, now)
             if o:
@@ -714,10 +856,11 @@ class Brain:
 
                 self.store.mark_done(o["task_id"], now)
                 self.store.set_llm_outcome(
-                    o["task_id"],
-                    classify_confirm(o["cases"], asked_cases, action), now)
-            self.store.log_event(now, store_id, sku, "confirm",
-                                 f"restocked {cases} cases (associate)", None)
+                    o["task_id"], classify_confirm(o["cases"], asked_cases, action), now
+                )
+            self.store.log_event(
+                now, store_id, sku, "confirm", f"restocked {cases} cases (associate)", None
+            )
         self.persist(key, now, None)
 
     def sweep_timeouts(self, now: int) -> None:
@@ -727,8 +870,9 @@ class Brain:
                 del self.open[key]
                 self.store.set_task_status(o["task_id"], "abandoned")
                 self.store.set_llm_outcome(o["task_id"], "abandoned", now)
-                self.store.log_event(now, key[0], key[1], "abandon",
-                                     f"open {timeout}m, abandoned", None)
+                self.store.log_event(
+                    now, key[0], key[1], "abandon", f"open {timeout}m, abandoned", None
+                )
                 self.persist(key, now, None)
         # PG backstop: memory can lose an open entry across recreates,
         # redeliveries, or races while the PG row stays open. Abandon by
@@ -750,8 +894,9 @@ class Brain:
                     continue  # memory owns it; handled above
                 self.store.set_task_status(task_id, "abandoned")
                 self.store.set_llm_outcome(task_id, "abandoned", now)
-                self.store.log_event(now, sid, sku, "abandon",
-                                     f"open >{timeout}m (backstop), abandoned", None)
+                self.store.log_event(
+                    now, sid, sku, "abandon", f"open >{timeout}m (backstop), abandoned", None
+                )
                 if key in self.shelf:
                     self.persist(key, now, None)
 

@@ -3,6 +3,7 @@
 Run:  uv run pytest -q
 Live: LMSTUDIO_LIVE=1 uv run pytest -q  (requires LM Studio server up)
 """
+
 import json
 import os
 
@@ -14,8 +15,13 @@ PROMO_CTX = {
     "store_id": "store-001",
     "sku": "soda-12pk-101",
     "sim_ts": "2026-01-05T18:20",
-    "state": {"boh": 60, "shelf_est": 18, "effective_capacity": 72,
-              "velocity_30m": 1.8, "velocity_120m": 0.6},
+    "state": {
+        "boh": 60,
+        "shelf_est": 18,
+        "effective_capacity": 72,
+        "velocity_30m": 1.8,
+        "velocity_120m": 0.6,
+    },
     "product": {"is_promo": True, "is_bulk": False, "case_size": 12, "threshold_pct": 0.35},
     "trigger": "promo_ambiguous",
     "recent_sales": [2, 1, 3, 2, 1],
@@ -71,8 +77,14 @@ def test_clamp_decision_caps_to_boh_and_calculator():
     req = ReasonRequest.model_validate(PROMO_CTX)
     # BOH 60 / 12 = 5 max; calculator wants 5. Override 9 must clamp to 5.
     d = ReasonDecision.model_validate(
-        {"needs_restock": True, "cases_override": 9, "confidence": 0.9,
-         "rationale": "x", "suppress_until_min": 0, "missing_data": []}
+        {
+            "needs_restock": True,
+            "cases_override": 9,
+            "confidence": 0.9,
+            "rationale": "x",
+            "suppress_until_min": 0,
+            "missing_data": [],
+        }
     )
     out, clamped = clamp_decision(d, req)
     assert clamped is True
@@ -86,8 +98,14 @@ def test_clamp_decision_flips_restock_when_boh_empty():
     ctx["state"] = dict(PROMO_CTX["state"], boh=0)
     req = ReasonRequest.model_validate(ctx)
     d = ReasonDecision.model_validate(
-        {"needs_restock": True, "cases_override": None, "confidence": 0.9,
-         "rationale": "x", "suppress_until_min": 0, "missing_data": []}
+        {
+            "needs_restock": True,
+            "cases_override": None,
+            "confidence": 0.9,
+            "rationale": "x",
+            "suppress_until_min": 0,
+            "missing_data": [],
+        }
     )
     out, clamped = clamp_decision(d, req)
     assert clamped is True
@@ -110,11 +128,22 @@ def test_cache_bucket_separates_velocities():
 
     def ctx(v30, v120):
         return ReasonContext(
-            store_id="s", sku="k", sim_ts="2026-01-05T10:00", boh=60,
-            shelf_est=18, effective_cap=72, case_size=12, is_promo=True,
-            is_bulk=False, threshold_pct=0.35, velocity_30m=v30,
-            velocity_120m=v120, trigger="promo_ambiguous", recent_sales=[],
-            open_task=None, truck_eta=None,
+            store_id="s",
+            sku="k",
+            sim_ts="2026-01-05T10:00",
+            boh=60,
+            shelf_est=18,
+            effective_cap=72,
+            case_size=12,
+            is_promo=True,
+            is_bulk=False,
+            threshold_pct=0.35,
+            velocity_30m=v30,
+            velocity_120m=v120,
+            trigger="promo_ambiguous",
+            recent_sales=[],
+            open_task=None,
+            truck_eta=None,
         )
 
     assert LlmCache.bucket(ctx(1.8, 0.6)) != LlmCache.bucket(ctx(0.5, 0.6))

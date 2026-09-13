@@ -8,6 +8,7 @@ BOH is the building total (floor + backroom), so the shelf can never hold
 more than BOH. The min() caps below also heal phantom shelves left by
 older over-confirmations on the next receipt.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

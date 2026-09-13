@@ -11,6 +11,7 @@ boundary tests.
 
 Run:  uv run python -m sim.loop --seed 42
 """
+
 from __future__ import annotations
 
 import argparse
@@ -78,8 +79,9 @@ class DaySummary:
         )
 
 
-def recoverable_gap(summary: DaySummary, sla_min: int = 25,
-                    day_end: int = 22 * 60) -> dict[tuple[str, str], int]:
+def recoverable_gap(
+    summary: DaySummary, sla_min: int = 25, day_end: int = 22 * 60
+) -> dict[tuple[str, str], int]:
     """Gap units arriving >sla_min after a task fired, before it closed.
 
     Approximation of "recoverable with a faster associate": loss inside
@@ -194,11 +196,11 @@ class DaySim:
         self.open[key] = {"emit_min": now, "cases": cases, "reason": reason}
         self.last_task_emit[key] = now  # only real tasks reset debounce
         priority = priority_of(self._snapshot(key, now), reason)
-        self.summary.tasks.append(
-            TaskEvent(store_id, sku, now, "task", reason, cases, priority))
+        self.summary.tasks.append(TaskEvent(store_id, sku, now, "task", reason, cases, priority))
         loc = "endcap+aisle" if self.skus[sku].is_promo else "aisle"
-        self.log(f"[{fmt(now)}] {store_id} {sku}: P{priority} fetch {cases} cases "
-                 f"({loc}) [{reason}]")
+        self.log(
+            f"[{fmt(now)}] {store_id} {sku}: P{priority} fetch {cases} cases ({loc}) [{reason}]"
+        )
 
     def _emit_check(self, key: Key, now: int, reason: str) -> None:
         store_id, sku = key
@@ -243,24 +245,26 @@ class DaySim:
                 # hours-of-cover are lowest.
                 lowest = sorted(
                     self.skus.values(),
-                    key=lambda s: self.shelf[(st.store_id, s.sku)].boh
-                    / max(s.popularity, 0.1),
+                    key=lambda s: self.shelf[(st.store_id, s.sku)].boh / max(s.popularity, 0.1),
                 )[:RECEIPT_WAVE_SIZE]
                 for s in lowest:
                     self._apply_receipt(st.store_id, s.sku, now)
                 skus = ", ".join(s.sku for s in lowest)
                 self.log(f"[{fmt(now)}] {st.store_id} receipt wave: {skus}")
-        for _, store_id, skus in [p for p in self.pending_receipts if p[0] <= now]:
-            for sku in skus:
-                self._apply_receipt(store_id, sku, now)
-            self.log(f"[{fmt(now)}] {store_id} truck receipt (backroom, shelf unchanged)")
+        for _, truck_store_id, truck_skus in [p for p in self.pending_receipts if p[0] <= now]:
+            for sku in truck_skus:
+                self._apply_receipt(truck_store_id, sku, now)
+            self.log(f"[{fmt(now)}] {truck_store_id} truck receipt (backroom, shelf unchanged)")
         self.pending_receipts = [p for p in self.pending_receipts if p[0] > now]
 
     def _stage_trucks(self, now: int) -> None:
         all_ids = list(self.skus)
         for st in self.stores:
-            need_goods = [sku for (sid, sku), m in self.shelf.items()
-                          if sid == st.store_id and m.boh < self.skus[sku].case_size_units]
+            need_goods = [
+                sku
+                for (sid, sku), m in self.shelf.items()
+                if sid == st.store_id and m.boh < self.skus[sku].case_size_units
+            ]
             manifest = self.trucks[st.store_id].manifest_at(now, need_goods, all_ids)
             if manifest is None:
                 continue
@@ -270,8 +274,11 @@ class DaySim:
                 m = self.shelf[key]
                 s = self.skus[sku]
                 d = evaluate_truck(
-                    zero_flag=m.zero_flag, boh=m.boh, shelf_est=m.shelf_est,
-                    effective_cap=m.effective_cap, case_size=s.case_size_units,
+                    zero_flag=m.zero_flag,
+                    boh=m.boh,
+                    shelf_est=m.shelf_est,
+                    effective_cap=m.effective_cap,
+                    case_size=s.case_size_units,
                 )
                 if d.action == "task":
                     self._emit_task(key, now, d.reason_code, d.cases)
@@ -293,8 +300,10 @@ class DaySim:
                     m.apply_boh_update(0, now)
                 m.zero_flag = True
                 m.zero_since_min = now
-                self.log(f"[{fmt(now)}] {st.store_id} {self.flags.silent_sku}: "
-                         "silent OOS (shelf 0, no sales will follow)")
+                self.log(
+                    f"[{fmt(now)}] {st.store_id} {self.flags.silent_sku}: "
+                    "silent OOS (shelf 0, no sales will follow)"
+                )
 
     def _stage_evaluate(self, now: int) -> None:
         for key in self.shelf:
@@ -380,14 +389,18 @@ def assert_acceptance(summary: DaySummary, flags: ScenarioFlags) -> None:
     if n_bulk > 3:
         errors.append(f"bulk_due tasks: {n_bulk} > 3 (debounce failed)")
     if flags.silent_oos:
-        early = [t for t in summary.tasks
-                 if t.sku == flags.silent_sku
-                 and flags.silent_drain_min <= t.emit_min < 14 * 60]
+        early = [
+            t
+            for t in summary.tasks
+            if t.sku == flags.silent_sku and flags.silent_drain_min <= t.emit_min < 14 * 60
+        ]
         if early:
             errors.append(f"silent SKU tasked before truck rescue: {early}")
-        rescue = [t for t in summary.tasks
-                  if t.sku == flags.silent_sku and t.emit_min >= 14 * 60
-                  and t.reason == "truck_zero"]
+        rescue = [
+            t
+            for t in summary.tasks
+            if t.sku == flags.silent_sku and t.emit_min >= 14 * 60 and t.reason == "truck_zero"
+        ]
         if not rescue:
             errors.append("silent SKU never rescued by truck_zero task")
     if errors:
@@ -415,13 +428,17 @@ def main() -> None:
     summary = sim.run()
 
     print(f"\n--- day summary (seed {sim.seed}) ---")
-    print(f"sales units: {summary.sales_units}, tasks: {len(summary.tasks)}, "
-          f"done: {summary.done_count}, abandoned: {summary.abandoned_count}, "
-          f"open at close: {len(sim.open)}")
+    print(
+        f"sales units: {summary.sales_units}, tasks: {len(summary.tasks)}, "
+        f"done: {summary.done_count}, abandoned: {summary.abandoned_count}, "
+        f"open at close: {len(sim.open)}"
+    )
     print("by reason:", dict(Counter(t.reason for t in summary.tasks)))
     print("suppressed:", dict(summary.suppress_counts))
-    print(f"normal pre-noon: {summary.count('normal_low', NOON_MIN)}, "
-          f"promo: {summary.count('promo_low')}, bulk: {summary.count('bulk_due')}")
+    print(
+        f"normal pre-noon: {summary.count('normal_low', NOON_MIN)}, "
+        f"promo: {summary.count('promo_low')}, bulk: {summary.count('bulk_due')}"
+    )
 
     if not args.no_assert:
         assert_acceptance(summary, flags)

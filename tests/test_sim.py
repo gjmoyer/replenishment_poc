@@ -1,4 +1,5 @@
 """M2 acceptance as regression tests. Quiet, deterministic, fast (<5s)."""
+
 import pytest
 
 from sim.catalog import STORES
@@ -42,7 +43,10 @@ def test_deterministic_across_processes():
         env = dict(os.environ, PYTHONHASHSEED=hashseed)
         r = subprocess.run(
             ["uv", "run", "python", "-m", "sim.loop", "--seed", "42", "--quiet"],
-            capture_output=True, text=True, cwd=root, env=env,
+            capture_output=True,
+            text=True,
+            cwd=root,
+            env=env,
         )
         assert r.returncode == 0, r.stderr[-2000:]
         wanted = ("sales units", "by reason", "normal pre-noon")
@@ -54,9 +58,12 @@ def test_deterministic_across_processes():
 def test_noon_boundary_task_counts_as_pre_noon():
     from sim.loop import DaySummary, TaskEvent
 
-    s = DaySummary(seed=1, tasks=[
-        TaskEvent("store-001", "milk-1gal-001", 720, "task", "normal_low", 2),
-    ])
+    s = DaySummary(
+        seed=1,
+        tasks=[
+            TaskEvent("store-001", "milk-1gal-001", 720, "task", "normal_low", 2),
+        ],
+    )
     assert s.count("normal_low", 720) == 1
     assert s.count("normal_low", 719) == 0
 
@@ -97,12 +104,16 @@ def test_silent_oos_rescued_only_after_truck():
     flags = ScenarioFlags(silent_oos=True)
     sim = DaySim(seed=42, flags=flags, verbose=False)
     summary = sim.run()
-    early = [t for t in summary.tasks
-             if t.sku == flags.silent_sku
-             and flags.silent_drain_min <= t.emit_min < 14 * 60]
+    early = [
+        t
+        for t in summary.tasks
+        if t.sku == flags.silent_sku and flags.silent_drain_min <= t.emit_min < 14 * 60
+    ]
     assert early == []
-    assert any(t.sku == flags.silent_sku and t.reason == "truck_zero"
-               and t.emit_min >= 14 * 60 for t in summary.tasks)
+    assert any(
+        t.sku == flags.silent_sku and t.reason == "truck_zero" and t.emit_min >= 14 * 60
+        for t in summary.tasks
+    )
 
 
 def test_two_stores_diverge():
@@ -191,8 +202,7 @@ def test_promo_rush_lifts_every_promo_sku():
     rush_min = 18 * 60 + 30
     for s in build_catalog():
         got = profile_mult(s.profile, rush_min, flags, s.is_promo, s.is_bulk)
-        base = profile_mult(s.profile, rush_min, ScenarioFlags(),
-                            s.is_promo, s.is_bulk)
+        base = profile_mult(s.profile, rush_min, ScenarioFlags(), s.is_promo, s.is_bulk)
         if s.is_promo:
             assert got == pytest.approx(base * 3.0), s.sku
         else:

@@ -4,6 +4,7 @@ Emits batched (sku -> units) sales per sim-minute tick. Rates follow the
 doc/03 day curve, scaled down ~5x from real-store volumes so a 15-min demo
 shows a believable handful of restocks instead of hundreds.
 """
+
 from __future__ import annotations
 
 import math
@@ -66,9 +67,9 @@ class ShopperSim:
 
     def _pick_sku(self, minute: int) -> Sku | None:
         weights = [
-            0.0 if muted(s.sku, minute, self.flags)
-            else s.popularity * profile_mult(s.profile, minute, self.flags,
-                                               s.is_promo, s.is_bulk)
+            0.0
+            if muted(s.sku, minute, self.flags)
+            else s.popularity * profile_mult(s.profile, minute, self.flags, s.is_promo, s.is_bulk)
             for s in self.skus
         ]
         total = sum(weights)

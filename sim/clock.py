@@ -3,6 +3,7 @@
 Speed (sim-min per wall-sec) only matters for live/demo modes; headless
 replay runs as fast as possible. pause/step API is for the M4 dashboard.
 """
+
 from __future__ import annotations
 
 OPEN_MIN = 7 * 60

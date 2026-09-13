@@ -1,4 +1,5 @@
 """M1 acceptance: deterministic rules. Run: uv run pytest tests/test_rules.py -q."""
+
 import pytest
 
 from decision.rules import (
@@ -115,8 +116,15 @@ def test_promo_uses_effective_capacity_not_shelf():
     # shelf_est 20 vs shelf 48 alone = 42% (naive "healthy"), but vs
     # effective 72 = 28% < 35% -> task. Proves endcap is in the math.
     d = evaluate(
-        std(shelf_est=20, shelf_capacity_units=48, case_size=12, is_promo=True,
-            boh=30, velocity_30m=0.5, velocity_120m=0.5),
+        std(
+            shelf_est=20,
+            shelf_capacity_units=48,
+            case_size=12,
+            is_promo=True,
+            boh=30,
+            velocity_30m=0.5,
+            velocity_120m=0.5,
+        ),
         now_min=600,
     )
     assert d.action == "task"
@@ -126,8 +134,15 @@ def test_promo_uses_effective_capacity_not_shelf():
 def test_promo_guard_suppresses_when_endcap_likely_full():
     # low pct, but BOH high and no spike -> suppress + LLM candidate
     d = evaluate(
-        std(shelf_est=18, shelf_capacity_units=48, case_size=12, is_promo=True,
-            boh=200, velocity_30m=0.5, velocity_120m=0.5),
+        std(
+            shelf_est=18,
+            shelf_capacity_units=48,
+            case_size=12,
+            is_promo=True,
+            boh=200,
+            velocity_30m=0.5,
+            velocity_120m=0.5,
+        ),
         now_min=600,
     )
     assert d.action == "suppress"
@@ -139,8 +154,15 @@ def test_promo_guard_suppresses_when_endcap_likely_full():
 def test_promo_single_sale_is_not_a_spike():
     # v120 == 0, v30 == 0.03 (one sale): ratio infinite, but below floor.
     d = evaluate(
-        std(shelf_est=18, shelf_capacity_units=48, case_size=12, is_promo=True,
-            boh=200, velocity_30m=0.03, velocity_120m=0.0),
+        std(
+            shelf_est=18,
+            shelf_capacity_units=48,
+            case_size=12,
+            is_promo=True,
+            boh=200,
+            velocity_30m=0.03,
+            velocity_120m=0.0,
+        ),
         now_min=600,
     )
     assert d.action == "suppress"
@@ -149,8 +171,15 @@ def test_promo_single_sale_is_not_a_spike():
 
 def test_promo_exact_double_is_not_a_spike():
     d = evaluate(
-        std(shelf_est=18, shelf_capacity_units=48, case_size=12, is_promo=True,
-            boh=200, velocity_30m=1.0, velocity_120m=0.5),
+        std(
+            shelf_est=18,
+            shelf_capacity_units=48,
+            case_size=12,
+            is_promo=True,
+            boh=200,
+            velocity_30m=1.0,
+            velocity_120m=0.5,
+        ),
         now_min=600,
     )
     assert d.action == "suppress"  # strict > required
@@ -158,8 +187,15 @@ def test_promo_exact_double_is_not_a_spike():
 
 def test_promo_guard_passes_on_low_boh():
     d = evaluate(
-        std(shelf_est=18, shelf_capacity_units=48, case_size=12, is_promo=True,
-            boh=20, velocity_30m=0.5, velocity_120m=0.5),
+        std(
+            shelf_est=18,
+            shelf_capacity_units=48,
+            case_size=12,
+            is_promo=True,
+            boh=20,
+            velocity_30m=0.5,
+            velocity_120m=0.5,
+        ),
         now_min=600,
     )
     assert d.action == "task"
@@ -168,8 +204,15 @@ def test_promo_guard_passes_on_low_boh():
 
 def test_promo_guard_passes_on_velocity_spike():
     d = evaluate(
-        std(shelf_est=18, shelf_capacity_units=48, case_size=12, is_promo=True,
-            boh=200, velocity_30m=1.8, velocity_120m=0.5),
+        std(
+            shelf_est=18,
+            shelf_capacity_units=48,
+            case_size=12,
+            is_promo=True,
+            boh=200,
+            velocity_30m=1.8,
+            velocity_120m=0.5,
+        ),
         now_min=600,
     )
     assert d.action == "task"
@@ -238,8 +281,14 @@ def test_zero_with_stock_tasks_immediately_no_truck_needed():
 
 def test_zero_with_stock_bulk_tasks_despite_debounce():
     d = evaluate(
-        ShelfState(boh=20, shelf_est=0, shelf_capacity_units=6, case_size=2,
-                   is_bulk=True, last_task_min=590),
+        ShelfState(
+            boh=20,
+            shelf_est=0,
+            shelf_capacity_units=6,
+            case_size=2,
+            is_bulk=True,
+            last_task_min=590,
+        ),
         now_min=600,
     )
     assert d.action == "task"
@@ -284,7 +333,11 @@ def test_zero_empty_stale_routes_to_llm():
 
 def test_truck_zero_resolves_with_cases():
     d = evaluate_truck(
-        zero_flag=True, boh=24, shelf_est=0, effective_cap=24, case_size=6,
+        zero_flag=True,
+        boh=24,
+        shelf_est=0,
+        effective_cap=24,
+        case_size=6,
     )
     assert d.action == "task"
     assert d.reason_code == "truck_zero"
@@ -293,7 +346,11 @@ def test_truck_zero_resolves_with_cases():
 
 def test_truck_before_receipt_emits_check_not_task():
     d = evaluate_truck(
-        zero_flag=True, boh=0, shelf_est=0, effective_cap=24, case_size=6,
+        zero_flag=True,
+        boh=0,
+        shelf_est=0,
+        effective_cap=24,
+        case_size=6,
     )
     assert d.action == "check"
     assert d.cases == 0
@@ -301,7 +358,11 @@ def test_truck_before_receipt_emits_check_not_task():
 
 def test_truck_ignores_healthy_shelf_even_at_boh_zero():
     d = evaluate_truck(
-        zero_flag=False, boh=0, shelf_est=20, effective_cap=24, case_size=6,
+        zero_flag=False,
+        boh=0,
+        shelf_est=20,
+        effective_cap=24,
+        case_size=6,
     )
     assert d.action == "no_action"
     assert d.reason_code == "truck_not_needed"
@@ -309,7 +370,11 @@ def test_truck_ignores_healthy_shelf_even_at_boh_zero():
 
 def test_truck_noop_when_healthy():
     d = evaluate_truck(
-        zero_flag=False, boh=50, shelf_est=20, effective_cap=24, case_size=6,
+        zero_flag=False,
+        boh=50,
+        shelf_est=20,
+        effective_cap=24,
+        case_size=6,
     )
     assert d.action == "no_action"
     assert d.reason_code == "truck_not_needed"
@@ -333,15 +398,17 @@ def test_sale_rejects_negative_boh():
 
 
 def test_receipt_does_not_autofill_shelf():
-    m = MutableShelf(boh=7, shelf_est=0, zero_flag=True, zero_since_min=500,
-                     effective_cap=24, case_size=6)
+    m = MutableShelf(
+        boh=7, shelf_est=0, zero_flag=True, zero_since_min=500, effective_cap=24, case_size=6
+    )
     assert m.apply_boh_update(31, 600) == "receipt"
     assert (m.boh, m.shelf_est, m.zero_flag) == (31, 0, True)
 
 
 def test_confirmation_refills_capped_and_clears_zero():
-    m = MutableShelf(boh=31, shelf_est=0, zero_flag=True, zero_since_min=500,
-                     effective_cap=24, case_size=6)
+    m = MutableShelf(
+        boh=31, shelf_est=0, zero_flag=True, zero_since_min=500, effective_cap=24, case_size=6
+    )
     m.apply_confirmation(cases_fetched=10, now_min=600)  # 60 units, cap 24
     assert m.shelf_est == 24
     assert m.zero_flag is False
@@ -361,8 +428,7 @@ def test_confirmation_rejects_negative_cases():
 def test_cover_trigger_fires_above_threshold():
     # shelf 12/24 = 50% (healthy) but velocity 0.5 -> cover 24 < 45 trigger.
     d = evaluate(
-        std(shelf_est=12, velocity_30m=0.5, velocity_120m=0.4,
-            cover_trigger_min=45),
+        std(shelf_est=12, velocity_30m=0.5, velocity_120m=0.4, cover_trigger_min=45),
         now_min=600,
     )
     assert d.action == "task"
@@ -372,8 +438,7 @@ def test_cover_trigger_fires_above_threshold():
 
 def test_cover_trigger_disabled_preserves_legacy():
     d = evaluate(
-        std(shelf_est=12, velocity_30m=0.5, velocity_120m=0.4,
-            cover_trigger_min=None),
+        std(shelf_est=12, velocity_30m=0.5, velocity_120m=0.4, cover_trigger_min=None),
         now_min=600,
     )
     assert d.action == "no_action"
@@ -382,8 +447,7 @@ def test_cover_trigger_disabled_preserves_legacy():
 
 def test_cover_trigger_ignores_stalled_velocity():
     d = evaluate(
-        std(shelf_est=12, velocity_30m=0.0, velocity_120m=0.4,
-            cover_trigger_min=45),
+        std(shelf_est=12, velocity_30m=0.0, velocity_120m=0.4, cover_trigger_min=45),
         now_min=600,
     )
     assert d.reason_code == "above_threshold"
@@ -397,10 +461,17 @@ def test_cover_trigger_rejects_nonpositive():
 def test_bulk_exempt_from_cover_trigger():
     # bulk shelf 4 > floor 2: pct/cover ignored, still suppressed.
     d = evaluate(
-        ShelfState(boh=20, shelf_est=4, shelf_capacity_units=6, case_size=2,
-                   is_bulk=True, threshold_pct=0.8,
-                   velocity_30m=0.5, velocity_120m=0.4,
-                   cover_trigger_min=45),
+        ShelfState(
+            boh=20,
+            shelf_est=4,
+            shelf_capacity_units=6,
+            case_size=2,
+            is_bulk=True,
+            threshold_pct=0.8,
+            velocity_30m=0.5,
+            velocity_120m=0.4,
+            cover_trigger_min=45,
+        ),
         now_min=600,
     )
     assert d.action == "suppress"
@@ -410,9 +481,16 @@ def test_bulk_exempt_from_cover_trigger():
 def test_promo_cover_critical_bypasses_endcap_guard():
     # High BOH + no spike would suppress, but cover 18 < 45 forces a task.
     d = evaluate(
-        std(shelf_est=18, shelf_capacity_units=48, case_size=12, is_promo=True,
-            boh=200, velocity_30m=1.0, velocity_120m=0.9,
-            cover_trigger_min=45),
+        std(
+            shelf_est=18,
+            shelf_capacity_units=48,
+            case_size=12,
+            is_promo=True,
+            boh=200,
+            velocity_30m=1.0,
+            velocity_120m=0.9,
+            cover_trigger_min=45,
+        ),
         now_min=600,
     )
     assert d.action == "task"
@@ -423,9 +501,16 @@ def test_promo_cover_critical_bypasses_endcap_guard():
 def test_promo_guard_still_suppresses_when_cover_healthy():
     # Same high-BOH setup but slow velocity -> cover inf, guard holds.
     d = evaluate(
-        std(shelf_est=18, shelf_capacity_units=48, case_size=12, is_promo=True,
-            boh=200, velocity_30m=0.05, velocity_120m=0.05,
-            cover_trigger_min=45),
+        std(
+            shelf_est=18,
+            shelf_capacity_units=48,
+            case_size=12,
+            is_promo=True,
+            boh=200,
+            velocity_30m=0.05,
+            velocity_120m=0.05,
+            cover_trigger_min=45,
+        ),
         now_min=600,
     )
     assert d.action == "suppress"
@@ -446,8 +531,7 @@ def test_priority_zero_shelf_is_p0():
 def test_priority_critical_cover_is_p1():
     from decision.rules import priority_of
 
-    d = std(shelf_est=12, velocity_30m=0.5, velocity_120m=0.4,
-            cover_trigger_min=45)
+    d = std(shelf_est=12, velocity_30m=0.5, velocity_120m=0.4, cover_trigger_min=45)
     assert priority_of(d, "normal_low") == 1
     assert priority_of(d, "promo_low") == 1
 
@@ -457,6 +541,5 @@ def test_priority_routine_otherwise_and_bulk_exempt():
 
     assert priority_of(std(shelf_est=9), "normal_low") == 2  # low, slow
     # Bulk at critical cover stays routine: debounce-gated by design.
-    d = bulk(shelf_est=2, velocity_30m=0.5, velocity_120m=0.4,
-             cover_trigger_min=45)
+    d = bulk(shelf_est=2, velocity_30m=0.5, velocity_120m=0.4, cover_trigger_min=45)
     assert priority_of(d, "bulk_due") == 2

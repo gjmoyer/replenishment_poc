@@ -18,6 +18,7 @@ Outcome lifecycle for one llm_calls row:
   done task actually sell through?) is computed live in the dashboard by
   joining tasks to sales_hist — no persisted column needed.
 """
+
 from __future__ import annotations
 
 from typing import Literal

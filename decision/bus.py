@@ -1,4 +1,5 @@
 """Kafka bus helpers. JSON everywhere; keys keep (store,sku) ordering."""
+
 from __future__ import annotations
 
 import json

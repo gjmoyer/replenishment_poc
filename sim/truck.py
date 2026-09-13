@@ -7,6 +7,7 @@ them so truck_zero tasks can upgrade from `check` to real cases. Ad-hoc
 `send_now` is the dashboard button path; entries are consumed once then
 pruned, and unknown SKUs are dropped at manifest build.
 """
+
 from __future__ import annotations
 
 import random

@@ -11,6 +11,7 @@ restart | step | scenario. Executed once, then cleared.
 
 Run: python -m sim.runner
 """
+
 from __future__ import annotations
 
 import json
@@ -71,7 +72,8 @@ class Runner:
         )
         self.boh = {
             (st.store_id, s.sku): KeyState(s.opening_boh)
-            for st in self.stores for s in self.skus.values()
+            for st in self.stores
+            for s in self.skus.values()
         }
         # Plain recreate (no epoch bump) must NOT reseed to opening while the
         # day is mid-flight — adopt live PG BOH so the next delta is real.
@@ -89,7 +91,8 @@ class Runner:
         }
         self.trucks = {
             st.store_id: TruckSim(
-                store_id=st.store_id, schedule_min=self.cfg.sim.trucks_min, seed=seed)
+                store_id=st.store_id, schedule_min=self.cfg.sim.trucks_min, seed=seed
+            )
             for st in self.stores
         }
         self.pending_receipts = []
@@ -97,27 +100,39 @@ class Runner:
 
     # -- publishers --------------------------------------------------------
 
-    def pub_boh(self, store_id: str, sku: str, sim_min: int, new_boh: int,
-                reason: str) -> None:
+    def pub_boh(self, store_id: str, sku: str, sim_min: int, new_boh: int, reason: str) -> None:
         old = self.boh[(store_id, sku)].boh
         self.boh[(store_id, sku)].boh = new_boh
-        self.producer.send("boh_updates", f"{store_id}:{sku}", {
-            "store_id": store_id, "sku": sku, "sim_ts": to_iso(sim_min),
-            "wall_ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "boh": new_boh, "delta": new_boh - old, "reason": reason,
-            "epoch": self.epoch,
-            "event_id": uuid.uuid4().hex,
-        })
+        self.producer.send(
+            "boh_updates",
+            f"{store_id}:{sku}",
+            {
+                "store_id": store_id,
+                "sku": sku,
+                "sim_ts": to_iso(sim_min),
+                "wall_ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "boh": new_boh,
+                "delta": new_boh - old,
+                "reason": reason,
+                "epoch": self.epoch,
+                "event_id": uuid.uuid4().hex,
+            },
+        )
 
     def pub_truck(self, store_id: str, sim_min: int, manifest: list[str]) -> None:
-        self.producer.send("truck_arrivals", store_id, {
-            "store_id": store_id, "sim_ts": to_iso(sim_min),
-            "wall_ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "truck_id": f"truck-{sim_min}",
-            "manifest_skus": manifest,
-            "epoch": self.epoch,
-            "event_id": uuid.uuid4().hex,
-        })
+        self.producer.send(
+            "truck_arrivals",
+            store_id,
+            {
+                "store_id": store_id,
+                "sim_ts": to_iso(sim_min),
+                "wall_ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "truck_id": f"truck-{sim_min}",
+                "manifest_skus": manifest,
+                "epoch": self.epoch,
+                "event_id": uuid.uuid4().hex,
+            },
+        )
 
     # -- tick stages --------------------------------------------------------
 
@@ -166,9 +181,10 @@ class Runner:
             for st in self.stores:
                 # Same days-of-supply ranking as sim/loop.py (parity): waves
                 # target lowest BOH/popularity, not lowest absolute BOH.
-                by_boh = sorted(self.skus.values(),
-                                key=lambda s: self.boh[(st.store_id, s.sku)].boh
-                                / max(s.popularity, 0.1))
+                by_boh = sorted(
+                    self.skus.values(),
+                    key=lambda s: self.boh[(st.store_id, s.sku)].boh / max(s.popularity, 0.1),
+                )
                 for s in by_boh[:RECEIPT_WAVE_SIZE]:
                     self.receipt(st.store_id, s.sku, now)
         for _, store_id, skus in [p for p in self.pending_receipts if p[0] <= now]:
@@ -191,8 +207,11 @@ class Runner:
                 return [r[0] for r in cur.fetchall()]
         except Exception as e:
             log.warning("goods query failed, falling back to BOH: %r", e)
-            return [sku for (sid, sku), ks in self.boh.items()
-                    if sid == store_id and ks.boh < self.skus[sku].case_size_units]
+            return [
+                sku
+                for (sid, sku), ks in self.boh.items()
+                if sid == store_id and ks.boh < self.skus[sku].case_size_units
+            ]
 
     def stage_trucks(self, now: int) -> None:
         for st in self.stores:

@@ -8,6 +8,7 @@
 - Final quantity ALWAYS passes through cases_needed() + BOH clamp here,
   even if the LLM service already clamped (defense in depth).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -195,17 +196,27 @@ def route(
             source="rule_fallback",
             rationale=f"{decision.detail} (LLM unreachable, rule fallback.)",
         ), {
-            "store_id": ctx.store_id, "sku": ctx.sku, "trigger": ctx.trigger,
-            "model": "unreached", "prompt_version": "?",
-            "input_hash": "n/a", "latency_ms": 0, "fallback": True,
+            "store_id": ctx.store_id,
+            "sku": ctx.sku,
+            "trigger": ctx.trigger,
+            "model": "unreached",
+            "prompt_version": "?",
+            "input_hash": "n/a",
+            "latency_ms": 0,
+            "fallback": True,
             "output": {"error": f"{type(e).__name__}"},
         }
 
     record = {
-        "store_id": ctx.store_id, "sku": ctx.sku, "trigger": ctx.trigger,
-        "model": out["meta"]["model"], "prompt_version": out["meta"]["prompt_version"],
-        "input_hash": input_hash, "latency_ms": latency_ms,
-        "fallback": out["meta"]["fallback"], "output": out["decision"],
+        "store_id": ctx.store_id,
+        "sku": ctx.sku,
+        "trigger": ctx.trigger,
+        "model": out["meta"]["model"],
+        "prompt_version": out["meta"]["prompt_version"],
+        "input_hash": input_hash,
+        "latency_ms": latency_ms,
+        "fallback": out["meta"]["fallback"],
+        "output": out["decision"],
     }
     d = out["decision"]
     if out["meta"]["fallback"]:
@@ -220,14 +231,20 @@ def route(
     cases = final_cases(ctx, d.get("cases_override"))
     if d["needs_restock"] and cases > 0:
         outcome = RoutedOutcome(
-            action="task", reason_code=decision.reason_code, cases=cases,
-            source="llm", rationale=d["rationale"],
+            action="task",
+            reason_code=decision.reason_code,
+            cases=cases,
+            source="llm",
+            rationale=d["rationale"],
             confidence=d.get("confidence"),
         )
     else:
         outcome = RoutedOutcome(
-            action="suppress", reason_code=decision.reason_code + "+llm",
-            cases=0, source="llm", rationale=d["rationale"],
+            action="suppress",
+            reason_code=decision.reason_code + "+llm",
+            cases=0,
+            source="llm",
+            rationale=d["rationale"],
             confidence=d.get("confidence"),
             suppress_until_min=d.get("suppress_until_min") or 0,
         )

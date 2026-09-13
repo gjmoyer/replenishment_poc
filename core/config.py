@@ -4,6 +4,7 @@ startup. No module may hardcode seed/day/trucks/delays/URLs — import here.
 Env overrides: LLM_BASE_URL, LLM_MODEL, LLM_TIMEOUT_S, KAFKA_BROKER,
 DATABASE_URL, SIM_SEED.
 """
+
 from __future__ import annotations
 
 import logging
@@ -43,9 +44,7 @@ class SimSettings:
     associate_delay_min: int = 25
     open_timeout_min: int = 120
     receipt_cases: int = 4
-    stores: tuple[tuple[str, str, float], ...] = (
-        ("store-001", "Downtown", 1.2),
-    )
+    stores: tuple[tuple[str, str, float], ...] = (("store-001", "Downtown", 1.2),)
 
 
 @dataclass(frozen=True)
@@ -109,33 +108,33 @@ def load() -> AppConfig:
     """Build validated config. Fails fast on nonsense, never at import."""
     y = _read_yaml()
     yl, ys = y.get("llm", {}), y.get("sim", {})
-    day = (ys.get("day") or {})
+    day = ys.get("day") or {}
     trucks = ys.get("trucks") or ["10:30", "14:00"]
 
     timeout = _get_float("LLM_TIMEOUT_S", float(yl.get("timeout_s", 30)))
     if timeout <= 0:
         raise ValueError(f"llm.timeout_s must be > 0, got {timeout}")
-    history_cases = int(os.getenv(
-        "LLM_HISTORY_CASES", yl.get("history_cases", 2)))
+    history_cases = int(os.getenv("LLM_HISTORY_CASES", yl.get("history_cases", 2)))
     if history_cases < 0 or history_cases > 3:
-        raise ValueError(
-            f"llm.history_cases must be in [0, 3], got {history_cases}")
+        raise ValueError(f"llm.history_cases must be in [0, 3], got {history_cases}")
     history_pool = int(yl.get("history_pool", 20))
     if history_pool <= 0:
-        raise ValueError(
-            f"llm.history_pool must be > 0, got {history_pool}")
+        raise ValueError(f"llm.history_pool must be > 0, got {history_pool}")
 
     seed = int(os.getenv("SIM_SEED", ys.get("seed", 42)))
-    stores = tuple(
-        (s["store_id"], s.get("name", s["store_id"]), float(s.get("rate_mult", 1.0)))
-        for s in (ys.get("stores") or [])
-    ) or SimSettings.stores
+    stores = (
+        tuple(
+            (s["store_id"], s.get("name", s["store_id"]), float(s.get("rate_mult", 1.0)))
+            for s in (ys.get("stores") or [])
+        )
+        or SimSettings.stores
+    )
     return AppConfig(
         llm=LlmSettings(
             provider=str(yl.get("provider", "lmstudio")),
-            base_url=os.getenv(
-                "LLM_BASE_URL", yl.get("base_url", LlmSettings.base_url)
-            ).rstrip("/"),
+            base_url=os.getenv("LLM_BASE_URL", yl.get("base_url", LlmSettings.base_url)).rstrip(
+                "/"
+            ),
             model=os.getenv("LLM_MODEL", yl.get("model", LlmSettings.model)),
             timeout_s=timeout,
             temperature=float(yl.get("temperature", 0.2)),

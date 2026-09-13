@@ -5,6 +5,7 @@ cases than the backroom held, minting shelf from thin air and clearing
 zero_flag. Guarded at three levels: UI clamp, service clamp, state
 invariant. Run: uv run pytest tests/test_service_confirm.py -q
 """
+
 from collections import deque
 from unittest.mock import MagicMock
 
@@ -26,16 +27,25 @@ def make_brain(key=KEY, **shelf_kw):
 
 def confirm_msg(cases):
     return {
-        "task_id": "t1", "store_id": "store-001", "sku": "soda-12pk-101",
-        "sim_ts": "2026-01-05T10:00", "action": "done", "cases_fetched": cases,
+        "task_id": "t1",
+        "store_id": "store-001",
+        "sku": "soda-12pk-101",
+        "sim_ts": "2026-01-05T10:00",
+        "action": "done",
+        "cases_fetched": cases,
         "event_id": "e1",
     }
 
 
 def test_over_boh_confirm_is_held_and_task_stays_open():
     brain = make_brain(boh=8, shelf_est=12)  # pre-existing phantom state
-    brain.open[KEY] = {"task_id": "t1", "emit_min": 600, "cases": 4,
-                       "reason": "normal_low", "shelf_at_emit": 0}
+    brain.open[KEY] = {
+        "task_id": "t1",
+        "emit_min": 600,
+        "cases": 4,
+        "reason": "normal_low",
+        "shelf_at_emit": 0,
+    }
     brain.on_confirm(confirm_msg(4))  # BOH 8 covers 0 full cases of 12
     assert KEY in brain.open  # held, not popped
     brain.store.mark_done.assert_not_called()
@@ -46,8 +56,13 @@ def test_over_boh_confirm_is_held_and_task_stays_open():
 
 def test_partial_confirm_clamps_to_boh_cover():
     brain = make_brain(boh=20, shelf_est=0)
-    brain.open[KEY] = {"task_id": "t1", "emit_min": 600, "cases": 4,
-                       "reason": "normal_low", "shelf_at_emit": 0}
+    brain.open[KEY] = {
+        "task_id": "t1",
+        "emit_min": 600,
+        "cases": 4,
+        "reason": "normal_low",
+        "shelf_at_emit": 0,
+    }
     brain.on_confirm(confirm_msg(4))  # BOH 20 covers 1 case of 12
     assert KEY not in brain.open
     assert brain.shelf[KEY].shelf_est == 12  # min(72, 0+12, 20), not 48
@@ -64,8 +79,14 @@ def test_state_invariant_survives_receipt_and_confirm():
 
 
 def truck_msg(manifest, sim_ts="2026-01-05T14:00", epoch=6):
-    return {"store_id": "store-001", "sim_ts": sim_ts, "truck_id": "t",
-            "manifest_skus": manifest, "epoch": epoch, "event_id": "trk"}
+    return {
+        "store_id": "store-001",
+        "sim_ts": sim_ts,
+        "truck_id": "t",
+        "manifest_skus": manifest,
+        "epoch": epoch,
+        "event_id": "trk",
+    }
 
 
 def test_truck_wakes_non_manifest_zero_with_stock():
@@ -94,9 +115,16 @@ MILK = ("store-001", "milk-1gal-001")  # opening 360, cap 24, case 6
 
 
 def sale_msg(**kw):
-    base = {"store_id": "store-001", "sku": "milk-1gal-001",
-            "sim_ts": "2026-01-05T10:00", "boh": 179, "delta": -1,
-            "reason": "sale", "epoch": 6, "event_id": "s1"}
+    base = {
+        "store_id": "store-001",
+        "sku": "milk-1gal-001",
+        "sim_ts": "2026-01-05T10:00",
+        "boh": 179,
+        "delta": -1,
+        "reason": "sale",
+        "epoch": 6,
+        "event_id": "s1",
+    }
     base.update(kw)
     return base
 

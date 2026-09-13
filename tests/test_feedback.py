@@ -3,6 +3,7 @@
 Pure verdict helpers plus Brain wiring (link calls to tasks, label outcomes
 at confirm/abandon). Run: uv run pytest tests/test_feedback.py -q
 """
+
 from collections import deque
 from unittest.mock import MagicMock
 
@@ -64,41 +65,68 @@ def make_brain(**shelf_kw):
 
 
 def confirm_msg(**kw):
-    base = {"task_id": "t1", "store_id": "store-001", "sku": "soda-12pk-101",
-            "sim_ts": "2026-01-05T10:00", "action": "done", "cases_fetched": 4,
-            "event_id": "e1", "epoch": 6}
+    base = {
+        "task_id": "t1",
+        "store_id": "store-001",
+        "sku": "soda-12pk-101",
+        "sim_ts": "2026-01-05T10:00",
+        "action": "done",
+        "cases_fetched": 4,
+        "event_id": "e1",
+        "epoch": 6,
+    }
     base.update(kw)
     return base
 
 
 def test_confirm_done_labels_llm_outcome():
     brain = make_brain()
-    brain.open[KEY] = {"task_id": "t1", "emit_min": 600, "cases": 4,
-                       "reason": "promo_low", "shelf_at_emit": 0}
+    brain.open[KEY] = {
+        "task_id": "t1",
+        "emit_min": 600,
+        "cases": 4,
+        "reason": "promo_low",
+        "shelf_at_emit": 0,
+    }
     brain.on_confirm(confirm_msg())
     brain.store.set_llm_outcome.assert_called_once_with("t1", "done", 600)
 
 
 def test_confirm_adjusted_when_associate_changes_cases():
     brain = make_brain()
-    brain.open[KEY] = {"task_id": "t1", "emit_min": 600, "cases": 4,
-                       "reason": "promo_low", "shelf_at_emit": 0}
+    brain.open[KEY] = {
+        "task_id": "t1",
+        "emit_min": 600,
+        "cases": 4,
+        "reason": "promo_low",
+        "shelf_at_emit": 0,
+    }
     brain.on_confirm(confirm_msg(cases_fetched=2, event_id="e2"))
     brain.store.set_llm_outcome.assert_called_once_with("t1", "adjusted", 600)
 
 
 def test_confirm_reject_labels_llm_outcome():
     brain = make_brain()
-    brain.open[KEY] = {"task_id": "t1", "emit_min": 600, "cases": 4,
-                       "reason": "promo_low", "shelf_at_emit": 0}
+    brain.open[KEY] = {
+        "task_id": "t1",
+        "emit_min": 600,
+        "cases": 4,
+        "reason": "promo_low",
+        "shelf_at_emit": 0,
+    }
     brain.on_confirm(confirm_msg(action="reject", cases_fetched=0, event_id="e3"))
     brain.store.set_llm_outcome.assert_called_once_with("t1", "rejected", 600)
 
 
 def test_abandon_labels_llm_outcome():
     brain = make_brain()
-    brain.open[KEY] = {"task_id": "t1", "emit_min": 600, "cases": 4,
-                       "reason": "promo_low", "shelf_at_emit": 0}
+    brain.open[KEY] = {
+        "task_id": "t1",
+        "emit_min": 600,
+        "cases": 4,
+        "reason": "promo_low",
+        "shelf_at_emit": 0,
+    }
     brain._last_pg_sweep = 10**12  # throttle the PG backstop path
     brain.sweep_timeouts(720)  # age 120 >= open_timeout 120
     brain.store.set_llm_outcome.assert_called_once_with("t1", "abandoned", 720)
@@ -110,31 +138,72 @@ def test_apply_routed_links_task_to_call(monkeypatch):
     from decision.rules import Decision
 
     brain = make_brain(boh=60, shelf_est=18)
-    record = {"store_id": "store-001", "sku": "soda-12pk-101",
-              "trigger": "promo_ambiguous", "model": "m", "prompt_version": "v1",
-              "input_hash": "abc", "latency_ms": 5, "fallback": False,
-              "output": {"needs_restock": True, "cases_override": None,
-                         "confidence": 0.8, "rationale": "r",
-                         "suppress_until_min": 0, "missing_data": []}}
+    record = {
+        "store_id": "store-001",
+        "sku": "soda-12pk-101",
+        "trigger": "promo_ambiguous",
+        "model": "m",
+        "prompt_version": "v1",
+        "input_hash": "abc",
+        "latency_ms": 5,
+        "fallback": False,
+        "output": {
+            "needs_restock": True,
+            "cases_override": None,
+            "confidence": 0.8,
+            "rationale": "r",
+            "suppress_until_min": 0,
+            "missing_data": [],
+        },
+    }
     monkeypatch.setattr(
-        svc, "route",
-        lambda *a, **k: (RoutedOutcome(action="task", reason_code="promo_low",
-                                       cases=4, source="llm",
-                                       rationale="r", confidence=0.8), record),
+        svc,
+        "route",
+        lambda *a, **k: (
+            RoutedOutcome(
+                action="task",
+                reason_code="promo_low",
+                cases=4,
+                source="llm",
+                rationale="r",
+                confidence=0.8,
+            ),
+            record,
+        ),
     )
     from decision.router import ReasonContext
 
     ctx = ReasonContext(
-        store_id="store-001", sku="soda-12pk-101", sim_ts="2026-01-05T10:00",
-        boh=60, shelf_est=18, effective_cap=72, case_size=12,
-        is_promo=True, is_bulk=False, threshold_pct=0.35,
-        velocity_30m=1.8, velocity_120m=0.6, trigger="promo_ambiguous",
-        recent_sales=[], open_task=None, truck_eta=None)
+        store_id="store-001",
+        sku="soda-12pk-101",
+        sim_ts="2026-01-05T10:00",
+        boh=60,
+        shelf_est=18,
+        effective_cap=72,
+        case_size=12,
+        is_promo=True,
+        is_bulk=False,
+        threshold_pct=0.35,
+        velocity_30m=1.8,
+        velocity_120m=0.6,
+        trigger="promo_ambiguous",
+        recent_sales=[],
+        open_task=None,
+        truck_eta=None,
+    )
     brain.apply_routed(
-        KEY, 600,
-        Decision(action="task", reason_code="promo_low", cases=4, detail="d",
-                 llm_candidate=True, llm_trigger="promo_ambiguous"),
-        ctx)
+        KEY,
+        600,
+        Decision(
+            action="task",
+            reason_code="promo_low",
+            cases=4,
+            detail="d",
+            llm_candidate=True,
+            llm_trigger="promo_ambiguous",
+        ),
+        ctx,
+    )
     saved = brain.store.add_llm_call.call_args[0][0]
     assert saved["sim_min"] == 600
     assert saved["epoch"] == 6
@@ -145,7 +214,8 @@ def test_apply_routed_links_task_to_call(monkeypatch):
     assert saved["input"]["weekday"] == "Mon"  # 2026-01-05T10:00 sim_ts
     task_id = brain.open[KEY]["task_id"]
     brain.store.link_llm_task.assert_called_once_with(
-        brain.store.add_llm_call.return_value, task_id)
+        brain.store.add_llm_call.return_value, task_id
+    )
 
 
 def test_emit_task_persists_priority():
@@ -153,9 +223,13 @@ def test_emit_task_persists_priority():
 
     brain = make_brain(boh=50, shelf_est=0)  # empty shelf, stocked -> P0
     tid = brain.emit_task(
-        KEY, 600,
-        RoutedOutcome(action="task", reason_code="zero_fetch", cases=3,
-                      source="rule", rationale="r"), "zero_fetch")
+        KEY,
+        600,
+        RoutedOutcome(
+            action="task", reason_code="zero_fetch", cases=3, source="rule", rationale="r"
+        ),
+        "zero_fetch",
+    )
     assert isinstance(tid, str)
     saved = brain.store.add_task.call_args[0][0]
     assert saved["priority"] == 0
