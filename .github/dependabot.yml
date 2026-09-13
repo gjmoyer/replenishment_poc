@@ -21,3 +21,7 @@ updates:
     directory: "/infra"
     schedule:
       interval: "weekly"
+    ignore:
+      # requires-python is >=3.12,<3.14; don't propose a 3.14+ base image.
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
