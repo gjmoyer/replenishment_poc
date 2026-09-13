@@ -1,0 +1,39 @@
+name: Bug report
+description: Something behaves differently than the docs say it should.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Observed behavior, with the exact task/SKU/store if relevant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: Quote the doc or rule that defines the correct behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Commands, seed, scenario flags, or dashboard steps.
+      placeholder: |
+        make replay SEED=42
+        # or: make up -> Restart -> Play 60x -> Force sale burst on soda
+    validations:
+      required: true
+
+  - type: input
+    id: commit
+    attributes:
+      label: Commit / version
+      placeholder: git rev-parse --short HEAD
+    validations:
+      required: false
