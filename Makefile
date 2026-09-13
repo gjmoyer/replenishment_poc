@@ -1,6 +1,6 @@
 SEED ?= 42
 
-.PHONY: install test coverage lint fmt typecheck replay health-llm ci release image up down logs
+.PHONY: install test coverage lint fmt typecheck replay health-llm ci release image pull up-image up down logs
 
 install:            ## Install dev deps and git hooks
 	uv sync --dev
@@ -36,6 +36,12 @@ release:
 
 image:
 	docker build -f infra/Dockerfile -t replenishment-poc:dev .
+
+pull:               ## Pull the published GHCR image (POC_TAG=0.1.1 to pin)
+	docker compose -f infra/docker-compose.yml pull
+
+up-image: pull      ## Run the stack from the published image (no local build)
+	docker compose -f infra/docker-compose.yml up
 
 up:
 	docker compose -f infra/docker-compose.yml up --build

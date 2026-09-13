@@ -36,6 +36,7 @@ services:
       retries: 20
 
   decision:
+    image: ghcr.io/gjmoyer/replenishment_poc:${POC_TAG:-latest}
     build:
       context: ..
       dockerfile: infra/Dockerfile
@@ -53,6 +54,7 @@ services:
         condition: service_healthy
 
   llm:
+    image: ghcr.io/gjmoyer/replenishment_poc:${POC_TAG:-latest}
     build:
       context: ..
       dockerfile: infra/Dockerfile
@@ -69,6 +71,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   sim:
+    image: ghcr.io/gjmoyer/replenishment_poc:${POC_TAG:-latest}
     build:
       context: ..
       dockerfile: infra/Dockerfile
@@ -84,6 +87,7 @@ services:
         condition: service_healthy
 
   dashboard:
+    image: ghcr.io/gjmoyer/replenishment_poc:${POC_TAG:-latest}
     build:
       context: ..
       dockerfile: infra/Dockerfile

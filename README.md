@@ -127,12 +127,22 @@ Prerequisites: Docker Desktop, [`uv`](https://docs.astral.sh/uv/), and
 [LM Studio](https://lmstudio.ai) with `Qwen2.5-7B-Instruct-MLX-4bit` loaded and
 its server on `:8081`.
 
+Build the stack locally:
+
 ```bash
-make up            # Redpanda + Postgres 18 + all services
+make up            # build Redpanda + Postgres 18 + all services, then start
 # open http://localhost:8501/ — press Restart, then Play
 make replay        # headless deterministic day (seed 42) + acceptance checks
 make test          # unit + regression suite
 make down          # stop everything
+```
+
+Prefer not to build? The release pipeline publishes the app image to GHCR on
+every `v*` tag, and Compose is wired to use it:
+
+```bash
+make up-image                 # pull ghcr.io/gjmoyer/replenishment_poc:latest, then up
+POC_TAG=0.1.1 make up-image   # or pin a specific release
 ```
 
 Five-minute tour: Restart → Play at 60x → watch morning depletion → Restock a
@@ -158,7 +168,7 @@ This repo is wired like a small production service, not a notebook:
   CI uses (`uv.lock`), so local and CI never disagree.
 - **Releases** (`.github/workflows/release.yml`) — pushing a `v*` tag builds a
   wheel + sdist, publishes a GitHub Release with auto-generated notes, and
-  pushes a versioned container image to GHCR.
+  pushes a **multi-arch** (`amd64` + `arm64`) container image to GHCR.
 - **Security** — CodeQL `security-and-quality` scanning on push, PR, and a
   weekly schedule; Dependabot keeps pip, Actions, and Docker images current.
 - **Reproducibility** — `uv.lock` committed; `make ci` runs exactly what
