@@ -225,24 +225,58 @@ def test_bulk_open_task_supersedes_per_idempotency_rule():
     assert d.cases == 2
 
 
-# --- silent zero + truck ---
+# --- empty shelf: split by where the goods are ---
 
 
-def test_zero_first_sight_emits_single_marker():
-    d = evaluate(std(shelf_est=0), now_min=600)
+def test_zero_with_stock_tasks_immediately_no_truck_needed():
+    d = evaluate(std(shelf_est=0), now_min=600)  # boh=100 covers
+    assert d.action == "task"
+    assert d.reason_code == "zero_fetch"
+    assert d.cases == 5  # ceil(30/6), BOH covers
+    assert d.llm_candidate is False  # unambiguous: fetch
+
+
+def test_zero_with_stock_bulk_tasks_despite_debounce():
+    d = evaluate(
+        ShelfState(boh=20, shelf_est=0, shelf_capacity_units=6, case_size=2,
+                   is_bulk=True, last_task_min=590),
+        now_min=600,
+    )
+    assert d.action == "task"
+    assert d.reason_code == "zero_fetch"
+
+
+def test_zero_with_stock_promo_tasks_rule_direct():
+    d = evaluate(
+        std(shelf_est=0, shelf_capacity_units=48, case_size=12, is_promo=True, boh=200),
+        now_min=600,
+    )
+    assert d.action == "task"
+    assert d.reason_code == "zero_fetch"
+    assert d.llm_candidate is False
+
+
+def test_zero_open_task_supersedes_not_duplicates():
+    d = evaluate(std(shelf_est=0, has_open_task=True), now_min=600)
+    assert d.action == "supersede"
+    assert d.reason_code == "zero_fetch"
+
+
+def test_zero_empty_building_emits_single_marker():
+    d = evaluate(std(shelf_est=0, boh=2), now_min=600)  # case 6: BOH covers 0
     assert d.action == "zero_marker"
     assert d.reason_code == "zero_open"
 
 
-def test_zero_repeat_does_not_busy_loop_or_spam_llm():
-    d = evaluate(std(shelf_est=0, zero_flag=True, zero_since_min=590), now_min=600)
+def test_zero_empty_repeat_does_not_busy_loop_or_spam_llm():
+    d = evaluate(std(shelf_est=0, boh=2, zero_flag=True, zero_since_min=590), now_min=600)
     assert d.action == "no_action"
     assert d.reason_code == "zero_waiting"
     assert d.llm_candidate is False  # only 10 min old
 
 
-def test_zero_stale_routes_to_llm():
-    d = evaluate(std(shelf_est=0, zero_flag=True, zero_since_min=500), now_min=600)
+def test_zero_empty_stale_routes_to_llm():
+    d = evaluate(std(shelf_est=0, boh=2, zero_flag=True, zero_since_min=500), now_min=600)
     assert d.action == "no_action"
     assert d.llm_candidate is True
     assert d.llm_trigger == "stale_zero"

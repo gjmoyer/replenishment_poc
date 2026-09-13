@@ -421,6 +421,31 @@ class Brain:
 
     # -- topic handlers -----------------------------------------------------
 
+    def note_epoch(self, msg: dict) -> bool:
+        """Epoch fence against restart time-travel. True = may process.
+
+        The runner stamps every message with the day-epoch and truncates PG
+        *before* bumping it, so: a higher epoch means a new day (adopt +
+        reset, then process); a lower epoch is a stale pre-restart message
+        (drop — otherwise a sim-730 event emits a future-stamped task into a
+        sim-432 day). Missing epoch (adhoc publishers) processes as current.
+        """
+        epoch = msg.get("epoch")
+        if epoch is None:
+            return True
+        try:
+            epoch = int(epoch)
+        except (TypeError, ValueError):
+            log.warning("bad epoch %r, dropping message", msg.get("epoch"))
+            return False
+        if epoch == self.epoch:
+            return True
+        if epoch > self.epoch:
+            self.reset(epoch)
+            return True
+        log.info("dropping stale epoch %s message (current %s)", epoch, self.epoch)
+        return False
+
     def on_boh(self, msg: dict) -> None:
         try:
             store_id, sku = msg["store_id"], msg["sku"]
@@ -428,6 +453,8 @@ class Brain:
             key = (store_id, sku)
         except (KeyError, TypeError, ValueError) as e:
             log.warning("dropping malformed boh_updates %r: %r", msg, e)
+            return
+        if not self.note_epoch(msg):
             return
         if not self.store.claim_event(msg.get("event_id")):
             return  # redelivery: already applied
@@ -502,6 +529,8 @@ class Brain:
         except (KeyError, TypeError, ValueError) as e:
             log.warning("dropping malformed truck_arrivals %r: %r", msg, e)
             return
+        if not self.note_epoch(msg):
+            return
         if not self.store.claim_event(msg.get("event_id")):
             return
         self.last_now = max(self.last_now, now)
@@ -526,6 +555,17 @@ class Brain:
                     source="rule", rationale=d.detail), "truck_zero")
             elif d.action == "check":
                 self.emit_check(key, now, "truck_zero")
+        # Wake-up call: silent zeros NOT on the manifest still get a fresh
+        # look (they generate no sales events of their own). With the zero
+        # split, covered ones task immediately, empty ones keep waiting.
+        manifest_set = set(manifest)
+        for (sid, sku), m in self.shelf.items():
+            if sid != store_id or not m.zero_flag or sku in manifest_set:
+                continue
+            sim_ts = msg.get("sim_ts", "")
+            key = (sid, sku)
+            self.route_with_repeat_check(
+                key, now, evaluate(self.snapshot(key, now), now), sim_ts)
 
     def on_confirm(self, msg: dict) -> None:
         try:
@@ -540,6 +580,8 @@ class Brain:
         if cases < 0:
             log.warning("negative cases_fetched, ignoring %r", msg)
             return
+        if not self.note_epoch(msg):
+            return
         if not self.store.claim_event(msg.get("event_id")):
             return  # redelivered confirm: never double-apply a refill
         if key not in self.shelf:
@@ -547,6 +589,26 @@ class Brain:
         log.info("confirm %s %s action=%s cases=%s task=%s",
                  store_id, sku, action, cases, msg.get("task_id"))
         self.last_now = max(self.last_now, now)
+        if action != "reject":
+            # Never shelve more than the building holds: clamp to BOH cover.
+            # A stale task (cases decided when stock existed) must not mint
+            # phantom shelf. Held tasks stay open for the next receipt.
+            from sim.catalog import ALL_SKUS
+
+            case_size = next((s.case_size_units for s in ALL_SKUS if s.sku == sku), None)
+            if case_size is None:
+                log.warning("unknown sku %s, ignoring confirm", sku)
+                return
+            affordable = self.shelf[key].boh // case_size
+            if cases > affordable:
+                if affordable <= 0:
+                    self.store.log_event(
+                        now, store_id, sku, "confirm",
+                        f"held: BOH {self.shelf[key].boh} covers no case — send a truck", None)
+                    self.persist(key, now, self.open.get(key))
+                    return
+                log.info("confirm clamped %s -> %s cases (BOH cover)", cases, affordable)
+                cases = affordable
         o = self.open.pop(key, None)
         self.checks.pop(key, None)
         if action == "reject":
@@ -558,7 +620,7 @@ class Brain:
         else:
             self.shelf[key].apply_confirmation(cases, now)
             if o:
-                self.store.set_task_status(o["task_id"], "done")
+                self.store.mark_done(o["task_id"], now)
             self.store.log_event(now, store_id, sku, "confirm",
                                  f"restocked {cases} cases (associate)", None)
         self.persist(key, now, None)

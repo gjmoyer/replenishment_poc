@@ -38,9 +38,10 @@ This must NOT auto-fill shelf — shelf only fills on associate confirmation. Te
 
 ## Truck publisher
 - Fixed trucks: 10:30 + 14:00 sim per store (configurable), plus a `Send truck now` dashboard button that injects an ad-hoc `truck_arrivals` with chosen SKUs.
-- Manifest always includes any SKU with `zero_flag=true` at that store (to demo silent-OOS rescue) + 2 random SKUs.
+- Manifest lists SKUs needing GOODS (`boh < case_size`) + 2 seeded fillers. Shelf-zero with backroom stock is deliberately NOT manifested — it needs an associate fetch, not a delivery — but every truck arrival re-evaluates all zero-flag SKUs as a wake-up call.
 - Ad-hoc button is how the user "triggers restock events" on demand during demo.
 - After manifest, schedule matching `receipt` BOH increases within +5–15 sim-min (models dock-to-backroom delay) so `truck_zero` tasks can compute real cases.
+- Silent drain zeroes the BUILDING too (correction, not a sale: no velocity pollution), matching the runner. The loop used to zero shelf only — fixed for parity.
 
 ## Scenario presets (one-click)
 - `promo-rush`: 18:00 peak + promo boost 3x → promo exception path.

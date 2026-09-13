@@ -40,6 +40,19 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS shelf_at_emit INT NULL;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS boh_at_emit INT NULL;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS done_sim_min INT NULL;
+
+-- Unmet demand. shelf_gap = shelf empty but backroom stocked (the
+-- replenishment miss: faster restocking recovers it). boh_empty = store
+-- truly out (ordering/DC problem, not shelf execution).
+CREATE TABLE IF NOT EXISTS lost_sales (
+  store_id TEXT NOT NULL,
+  sku TEXT NOT NULL,
+  sim_min INT NOT NULL,
+  units INT NOT NULL,
+  reason TEXT NOT NULL,  -- shelf_gap | boh_empty
+  PRIMARY KEY (store_id, sku, sim_min, reason)
+);
 CREATE INDEX IF NOT EXISTS tasks_store_status ON tasks (store_id, status);
 
 CREATE TABLE IF NOT EXISTS events (

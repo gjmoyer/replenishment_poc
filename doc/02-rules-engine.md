@@ -66,21 +66,30 @@ Pct alone thrashes. Require ALL:
 - Else suppress with counter `bulk_suppressed_total`.
 - `reason_code = bulk_due`.
 
-### Silent zero
+### Empty shelf: split by where the goods are
+
 ```
-if shelf_est <= 0:
-    zero_flag = True, zero_since = sim_now
-    # do NOT emit repeat tasks every sale (there are no sales). Emit one `zero_open` marker.
-    # Real task comes from truck_arrivals (see below) or from LLM exception if stale > threshold.
+if shelf_est <= 0 and cases_needed(0, effective_cap, case_size, boh) >= 1:
+    emit task, reason_code = zero_fetch   # fetch from backroom NOW
+elif shelf_est <= 0 and not zero_flag:
+    emit one zero_open marker             # building empty: wait for truck
 ```
+
+- **Shelf 0 + backroom covers ≥1 case → `zero_fetch` task immediately.**
+  Rule-direct (no LLM — unambiguous), one-open-task guard applies.
+  Promo/bulk gates are bypassed: `shelf_est == 0` already means the
+  endcap is empty too. This is the associate-fetch case, no truck involved.
+- **Shelf 0 + backroom empty → marker once, then `zero_waiting`.**
+  Real task comes from `truck_arrivals` (check → receipt → task) or from
+  the LLM after 60 stale sim-min. Never busy-loops.
 
 ### Truck arrival
 ```
 on truck_arrivals:
-  for sku in manifest_skus:
-    if zero_flag OR BOH == 0 OR open zero marker:
-        emit check/restock task using current BOH (post-receipt BOH update usually follows within minutes)
-        reason_code = truck_zero
+  for sku in manifest_skus:   # manifest lists SKUs needing GOODS (boh < case)
+    evaluate_truck(...) -> task | check | noop
+  for other zero_flag keys at that store:   # wake-up call
+    evaluate(...) -> routes normally (covered ones task immediately)
 ```
 Handle ordering: if manifest arrives before `boh_updates` receipt, emit task as `pending_boh` and upgrade cases when receipt lands. Never emit `cases > floor(BOH/case_size)` — if BOH is 0 at that instant, emit `check` with cases=0 + instruction "verify dock".
 

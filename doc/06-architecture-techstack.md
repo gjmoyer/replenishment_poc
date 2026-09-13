@@ -81,6 +81,18 @@ Redis was originally for sub-ms hot-key state + pub/sub. We don't need it here: 
 - Dashboard footer + `/metrics` endpoint (Prometheus text) on decision + LLM services.
 - Persist every LLM prompt/output pair to Postgres `llm_calls` table for later eval.
 
+## Data lifecycle (does the DB grow forever?)
+
+No. Day tables (`sales_hist`, `tasks`, `events`, `llm_calls`, `lost_sales`,
+`shelf_state`, `processed`) are TRUNCATEd on every Restart/scenario; a busy
+day is a few thousand rows total (~10 MB). Fixed tables: `shelf_state`
+(20 rows, upserted), `sim_control` (1 row). `processed` (Kafka
+idempotency ids) is wiped on restart too — safe because the epoch fence
+rejects old-epoch redeliveries before they ever reach the claim check.
+Kafka itself keeps 7 days (`log_retention_ms=604800000` cluster default);
+daily traffic is kilobytes, the ~200 MB data dir is Redpanda fixed
+overhead (controller/offsets/preallocated segments), not our data.
+
 ## Cost / perf notes
 - Rules path p95 <5s wall. LLM path p95 <2min wall (async, non-blocking).
 - Cache LLM by state bucket; POC budget <$5/day on hosted small model; Ollama fallback documented.

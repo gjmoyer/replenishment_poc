@@ -145,8 +145,22 @@ def evaluate(state: ShelfState, now_min: int) -> Decision:
     """Evaluate one (store, sku) at sim time now_min. Pure."""
     cap = state.effective_cap
 
-    # 1. Silent zero — marker once, then wait (truck/LLM), never busy-loop.
+    # 1. Empty shelf — split by where the goods are (doc/02 zero rule).
     if state.shelf_est <= 0:
+        fetchable = cases_needed(0, cap, state.case_size, state.boh)
+        if fetchable >= 1:
+            # Goods are in the building: fetch from the backroom NOW.
+            # No truck involved, no LLM ambiguity — rule-direct.
+            return _with_open_task_guard(
+                _finalize_task(
+                    state,
+                    "zero_fetch",
+                    f"shelf empty, backroom {state.boh} units covers a fetch"
+                    " — no truck needed.",
+                ),
+                state,
+            )
+        # Building is empty too: marker once, then wait (truck/LLM).
         if not state.zero_flag:
             return Decision(
                 action="zero_marker",

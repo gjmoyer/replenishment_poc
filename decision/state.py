@@ -2,6 +2,11 @@
 
 Stateful counterpart to the pure rules in decision/rules.py. Used by the
 sim loop and the M3 decision service alike so both evolve state identically.
+
+Physical invariant, enforced on every transition: 0 <= shelf_est <= boh.
+BOH is the building total (floor + backroom), so the shelf can never hold
+more than BOH. The min() caps below also heal phantom shelves left by
+older over-confirmations on the next receipt.
 """
 from __future__ import annotations
 
@@ -33,6 +38,7 @@ class MutableShelf:
             return "noop"
         if new_boh > self.boh:
             self.boh = new_boh  # backroom, NOT shelf
+            self.shelf_est = min(self.shelf_est, self.boh)
             return "receipt"
         sold = self.boh - new_boh
         self.boh = new_boh
@@ -47,7 +53,7 @@ class MutableShelf:
         if cases_fetched < 0:
             raise ValueError("cases_fetched must be >= 0")
         self.shelf_est = min(
-            self.effective_cap, self.shelf_est + cases_fetched * self.case_size
+            self.effective_cap, self.shelf_est + cases_fetched * self.case_size, self.boh
         )
         self.sales_since_task = 0
         self.last_task_min = now_min

@@ -105,6 +105,7 @@ class Runner:
             "store_id": store_id, "sku": sku, "sim_ts": to_iso(sim_min),
             "wall_ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "boh": new_boh, "delta": new_boh - old, "reason": reason,
+            "epoch": self.epoch,
             "event_id": uuid.uuid4().hex,
         })
 
@@ -113,19 +114,47 @@ class Runner:
             "store_id": store_id, "sim_ts": to_iso(sim_min),
             "wall_ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "truck_id": f"truck-{sim_min}",
-            "manifest_skus": manifest, "event_id": uuid.uuid4().hex,
+            "manifest_skus": manifest,
+            "epoch": self.epoch,
+            "event_id": uuid.uuid4().hex,
         })
 
     # -- tick stages --------------------------------------------------------
 
+    def shelf_snapshot(self) -> dict[tuple[str, str], int]:
+        """Decision-service shelf estimates, for shelf-aware demand.
+
+        Missing row = decision hasn't initialized this key yet: callers must
+        fall back to BOH-only clamping, never record phantom losses.
+        """
+        try:
+            with self.store.conn.cursor() as cur:
+                cur.execute("SELECT store_id, sku, shelf_est FROM shelf_state")
+                return {(r[0], r[1]): r[2] for r in cur.fetchall()}
+        except Exception as e:
+            log.warning("shelf snapshot failed: %r", e)
+            return {}
+
     def stage_sales(self, now: int) -> None:
+        shelf = self.shelf_snapshot()
         for st in self.stores:
             for sku, units in self.shoppers[st.store_id].gen_sales(now).items():
                 key = (st.store_id, sku)
-                units = min(units, self.boh[key].boh)
-                if units <= 0:
+                if key not in shelf:
+                    sellable = min(units, self.boh[key].boh)
+                    if sellable > 0:
+                        self.pub_boh(st.store_id, sku, now, self.boh[key].boh - sellable, "sale")
                     continue
-                self.pub_boh(st.store_id, sku, now, self.boh[key].boh - units, "sale")
+                # A shelf can't hand over more than it holds; the remainder
+                # is unmet demand, split by root cause (see lost_sales).
+                sellable = min(units, self.boh[key].boh, shelf[key])
+                lost = units - sellable
+                if lost > 0:
+                    reason = "shelf_gap" if self.boh[key].boh > 0 else "boh_empty"
+                    self.store.add_loss(st.store_id, sku, now, lost, reason)
+                if sellable <= 0:
+                    continue
+                self.pub_boh(st.store_id, sku, now, self.boh[key].boh - sellable, "sale")
 
     def receipt(self, store_id: str, sku: str, now: int) -> None:
         key = (store_id, sku)
@@ -144,26 +173,28 @@ class Runner:
                 self.receipt(store_id, sku, now)
         self.pending_receipts = [p for p in self.pending_receipts if p[0] > now]
 
-    def _zero_skus(self, store_id: str) -> list[str]:
-        """Manifest must include shelf-zero SKUs (spec doc/03) — that's the
-        decision service's zero_flag, not runner BOH (shelf can be empty
-        while backroom still holds stock)."""
+    def _need_goods_skus(self, store_id: str) -> list[str]:
+        """Manifest candidates: SKUs whose backroom can't cover one case.
+
+        Shelf-zero with stock is deliberately EXCLUDED — it needs an
+        associate fetch, not truck goods (the arrival itself re-checks
+        those as a wake-up call)."""
         try:
             with self.store.conn.cursor() as cur:
                 cur.execute(
-                    "SELECT sku FROM shelf_state WHERE store_id=%s AND zero_flag",
+                    "SELECT sku FROM shelf_state WHERE store_id=%s AND boh < case_size",
                     (store_id,),
                 )
                 return [r[0] for r in cur.fetchall()]
         except Exception as e:
-            log.warning("zero query failed, falling back to BOH: %r", e)
+            log.warning("goods query failed, falling back to BOH: %r", e)
             return [sku for (sid, sku), ks in self.boh.items()
-                    if sid == store_id and ks.boh <= 0]
+                    if sid == store_id and ks.boh < self.skus[sku].case_size_units]
 
     def stage_trucks(self, now: int) -> None:
         for st in self.stores:
-            zeros = self._zero_skus(st.store_id)
-            manifest = self.trucks[st.store_id].manifest_at(now, zeros, list(self.skus))
+            need_goods = self._need_goods_skus(st.store_id)
+            manifest = self.trucks[st.store_id].manifest_at(now, need_goods, list(self.skus))
             if manifest is None:
                 continue
             self.pub_truck(st.store_id, now, manifest)
@@ -196,9 +227,18 @@ class Runner:
             self.trucks[store_id].send_now(now, skus)
         elif cmd == "burst":
             store_id, sku = arg.get("store_id", "store-001"), arg.get("sku", "")
-            units = min(int(arg.get("units", 10)), self.boh[(store_id, sku)].boh)
-            if sku in self.skus and units > 0:
-                self.pub_boh(store_id, sku, now, self.boh[(store_id, sku)].boh - units, "sale")
+            if sku not in self.skus:
+                return
+            key = (store_id, sku)
+            want = int(arg.get("units", 10))
+            shelf = self.shelf_snapshot().get(key)
+            cap = self.boh[key].boh if shelf is None else min(self.boh[key].boh, shelf)
+            units = min(want, cap)
+            if want > units and shelf is not None:
+                reason = "shelf_gap" if self.boh[key].boh > 0 else "boh_empty"
+                self.store.add_loss(store_id, sku, now, want - units, reason)
+            if units > 0:
+                self.pub_boh(store_id, sku, now, self.boh[key].boh - units, "sale")
                 self.producer.flush()
         elif cmd == "scenario":
             flags = dict(arg.get("flags", {}))

@@ -18,6 +18,7 @@ import psycopg
 import streamlit as st
 from kafka import KafkaProducer
 
+from dashboard.pickutil import merge_newcomers
 from sim.catalog import build_catalog
 from sim.clock import fmt as fmt_min
 
@@ -38,6 +39,8 @@ st.markdown(
 .block-container {max-width: 1440px; padding: 0.75rem 1rem 8rem 1rem;}
 .stickybar {position: sticky; top: 0; z-index: 999; background: #14161B;
   border-bottom: 1px solid #2E3442; padding: 8px 1rem; margin: 0 -1rem 12px -1rem;}
+.stickybar .stButton > button {padding: 0.25rem 0.6rem; font-size: 13px;
+  white-space: nowrap;}
 .clock {font-family: ui-monospace, monospace; font-size: 28px; color: #E9ECF3;
   font-variant-numeric: tabular-nums;}
 .num {font-variant-numeric: tabular-nums;}
@@ -139,9 +142,10 @@ def kafka_producer():
 
 
 def get_ctl() -> dict:
-    rows = q("SELECT sim_min, paused, speed, seed, day_done, flags FROM sim_control WHERE id=1")
+    rows = q("SELECT sim_min, paused, speed, seed, epoch, day_done, flags"
+             " FROM sim_control WHERE id=1")
     return rows[0] if rows else {"sim_min": 420, "paused": True, "speed": 60,
-                                 "seed": 42, "day_done": False, "flags": {}}
+                                 "seed": 42, "epoch": 1, "day_done": False, "flags": {}}
 
 
 # --- helpers ---------------------------------------------------------------------
@@ -182,9 +186,24 @@ def publish_confirmation(store_id, sku, task_id, action, cases):
     kafka_producer().send("restock_confirmations", key=f"{store_id}:{sku}", value={
         "task_id": task_id, "store_id": store_id, "sku": sku, "sim_ts": sim_ts,
         "action": action, "cases_fetched": cases, "actor": "dashboard",
+        "epoch": ctl.get("epoch", 1),
         "event_id": uuid.uuid4().hex,
     })
     kafka_producer().flush(2.0)
+
+
+def sendable_cases(t, adj):
+    """Clamp a confirmation to what the backroom can cover.
+    Returns (cases_to_send, notice|None). A stale task (cases decided when
+    stock existed) must never mint phantom shelf from the UI side either —
+    the service enforces the same clamp as backstop.
+    """
+    affordable = (t["boh"] or 0) // (t["case_size"] or 1)
+    if adj <= affordable:
+        return adj, None
+    if affordable <= 0:
+        return 0, "Backroom empty — send a truck first"
+    return affordable, f"BOH covers {affordable} — sending {affordable}"
 
 
 def prune_session(open_ids: set):
@@ -193,6 +212,128 @@ def prune_session(open_ids: set):
     st.session_state.skipped = {t: w for t, w in st.session_state.skipped.items()
                                 if t in open_ids}
     st.session_state.adj = {t: c for t, c in st.session_state.adj.items() if t in open_ids}
+
+
+# --- day report ---------------------------------------------------------------
+
+SLA_MIN = 25  # associate response target; gap loss after this is "recoverable"
+
+
+def money(v: float) -> str:
+    return f"${v:,.2f}"
+
+
+def _pm(sku: str):
+    p = PRODUCTS.get(sku)
+    return ((p.price, p.margin_pct) if p else (0.0, 0.0))
+
+
+@st.dialog("Day report", width="large")
+def day_report():
+    ctl = get_ctl()
+    now_min = ctl["sim_min"]
+    complete = bool(ctl["day_done"])
+    state = "day complete 07:00–22:00" if complete else f"in progress at {fmt_min(now_min)} SIM"
+    st.caption(f"{store} · {state} · seed {ctl['seed']}")
+    sold = {r["sku"]: r["n"] for r in q(
+        "SELECT sku, sum(units) n FROM sales_hist WHERE store_id=%s GROUP BY 1", (store,))}
+    loss = q(
+        "SELECT sku, reason, sum(units) u, count(DISTINCT sim_min) m"
+        " FROM lost_sales WHERE store_id=%s GROUP BY 1, 2", (store,))
+    task_rows = q(
+        "SELECT sku, emit_sim_min, done_sim_min, status FROM tasks"
+        " WHERE store_id=%s AND action='task'", (store,))
+    gap_detail = q(
+        "SELECT sku, sim_min, sum(units) u FROM lost_sales"
+        " WHERE store_id=%s AND reason='shelf_gap' GROUP BY 1, 2", (store,))
+
+    from sim.loop import DaySummary, TaskEvent, recoverable_gap
+    summary = DaySummary(seed=ctl["seed"])
+    for r in task_rows:
+        key = (store, r["sku"])
+        summary.tasks.append(TaskEvent(store, r["sku"], r["emit_sim_min"], "task", "", 0))
+        if r["status"] == "done" and r["done_sim_min"] is not None:
+            summary.dones.append((key, r["emit_sim_min"], r["done_sim_min"]))
+    for r in gap_detail:
+        summary.gap_events.append((r["sim_min"], (store, r["sku"]), r["u"]))
+    rec = recoverable_gap(summary, sla_min=SLA_MIN)
+
+    gap, empty, gap_mins = {}, {}, {}
+    for r in loss:
+        if r["reason"] == "shelf_gap":
+            gap[r["sku"]] = r["u"]
+            gap_mins[r["sku"]] = r["m"]
+        else:
+            empty[r["sku"]] = r["u"]
+    done_n, restock_times, time_travel = {}, {}, 0
+    for r in task_rows:
+        if r["status"] == "done":
+            done_n[r["sku"]] = done_n.get(r["sku"], 0) + 1
+            if r["done_sim_min"] is not None:
+                if r["done_sim_min"] > r["emit_sim_min"]:
+                    restock_times.setdefault(r["sku"], []).append(
+                        r["done_sim_min"] - r["emit_sim_min"])
+                else:
+                    # done stamped at/before fire: cross-restart residue from
+                    # before epoch-fencing (see doc/10). Excluded, not averaged.
+                    time_travel += 1
+
+    if not sold and not gap and not empty:
+        st.info("Nothing to report yet — the day just started.")
+        return
+
+    rev = sum(sold.get(s, 0) * _pm(s)[0] for s in sold)
+    profit = sum(sold.get(s, 0) * _pm(s)[0] * _pm(s)[1] for s in sold)
+    gap_rev = sum(gap.get(s, 0) * _pm(s)[0] for s in gap)
+    gap_profit = sum(gap.get(s, 0) * _pm(s)[0] * _pm(s)[1] for s in gap)
+    rec_units = sum(rec.values())
+    rec_rev = sum(rec.get(s, 0) * _pm(s)[0] for s in rec)
+    rec_profit = sum(rec.get(s, 0) * _pm(s)[0] * _pm(s)[1] for s in rec)
+    empty_rev = sum(empty.get(s, 0) * _pm(s)[0] for s in empty)
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Revenue captured", money(rev), f"{money(profit)} profit")
+    k2.metric("Revenue missed (shelf gaps)", money(gap_rev), f"{money(gap_profit)} profit")
+    k3.metric("Recoverable ≤25min response", money(rec_rev),
+              f"{rec_units} units, {money(rec_profit)} profit")
+    k4.metric("Lost, store empty (DC problem)", money(empty_rev), "not restockable")
+
+    rows = []
+    for sku in sorted(set(sold) | set(gap) | set(empty),
+                      key=lambda s: gap.get(s, 0) * _pm(s)[0], reverse=True):
+        price, margin = _pm(sku)
+        prod = PRODUCTS.get(sku)
+        times = restock_times.get(sku, [])
+        rows.append({
+            "Product": prod.name if prod else sku,
+            "Sold": sold.get(sku, 0),
+            "Revenue": sold.get(sku, 0) * price,
+            "Gap units": gap.get(sku, 0),
+            "Gap $": gap.get(sku, 0) * price,
+            "Gap mins": gap_mins.get(sku, 0),
+            "Restocks": done_n.get(sku, 0),
+            "Avg restock": round(sum(times) / len(times)) if times else None,
+            "Recoverable $": round(rec.get(sku, 0) * price, 2),
+        })
+    st.dataframe(
+        rows,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Revenue": st.column_config.NumberColumn(format="$%.2f"),
+            "Gap $": st.column_config.NumberColumn(format="$%.2f"),
+            "Recoverable $": st.column_config.NumberColumn(format="$%.2f"),
+            "Avg restock": st.column_config.NumberColumn(format="%d min"),
+        },
+    )
+    st.caption(
+        f"Recoverable = shelf-gap units arriving >{SLA_MIN} min after the task fired, before it"
+        " closed — i.e. loss a faster associate response would capture. Prices/margins are"
+        " planning estimates from the catalog; backroom ≈ BOH − shelf. Store-empty loss is a"
+        " DC/ordering problem, excluded from recoverable."
+        + (f" {time_travel} restock(s) excluded as time-travel."
+           if time_travel else "")
+    )
 
 
 # --- session + store ---------------------------------------------------------------
@@ -221,7 +362,7 @@ def header():
     ctl = get_ctl()
     now_min = ctl["sim_min"]
     day_pct = min(max((now_min - DAY_OPEN) / DAY_SPAN, 0.0), 1.0)
-    c1, c2, c3, c4 = st.columns([2.2, 4.5, 2.6, 2.7])
+    c1, c2, c3, c4 = st.columns([2.0, 4.2, 2.2, 3.6])
     with c1:
         sel = st.selectbox("Store", stores, index=stores.index(st.session_state.store),
                            key="store_sel", label_visibility="collapsed")
@@ -252,12 +393,14 @@ def header():
                                 label_visibility="collapsed") != ctl["speed"]:
             set_fields(speed=st.session_state.speed)
     with c4:
-        b1, b2, b3 = st.columns(3)
+        b1, b2, b3, b4 = st.columns([1, 1, 1, 1.2])
         if b1.button("Pause" if not ctl["paused"] else "Play", key="pp"):
             set_fields(paused=not ctl["paused"])
-        if b2.button("Step +15m", key="step"):
+        if b2.button("Step", key="step", help="Advance 15 sim-minutes"):
             claim_cmd("step", {"n": 15})
-        if b3.button("Restart", key="restart"):
+        if b3.button("Report", key="report", help="Day financial report"):
+            day_report()
+        if b4.button("Restart", key="restart", help="Restart the day from 07:00"):
             if claim_cmd("restart"):
                 st.session_state.done_tasks = {}
                 st.session_state.skipped = {}
@@ -279,7 +422,10 @@ def header():
         st.success(f"Day complete 07:00–22:00 for {store} — done {syn['done']}/{syn['total']}, "
                    f"rejected {syn['rej']}, LLM calls {llm['n']} (all stores), "
                    f"shelves still zero: {z['n']}.")
-        if st.button("Restart day", key="day_restart"):
+        d1, d2 = st.columns([1, 4])
+        if d1.button("Day report", key="day_report"):
+            day_report()
+        if d2.button("Restart day", key="day_restart"):
             if claim_cmd("restart"):
                 st.session_state.done_tasks = {}
                 st.session_state.skipped = {}
@@ -370,6 +516,7 @@ with left:
                     prod = PRODUCTS.get(r["sku"])
                     name = prod.name if prod else r["sku"]
                     pack = prod.pack if prod else "unit"
+                    price = prod.price if prod else 0.0
                     shelf_cap = prod.shelf_capacity_units if prod else r["effective_cap"]
                     extra = r["effective_cap"] - shelf_cap
                     endcap = f" (+{extra} endcap)" if extra > 0 else ""
@@ -394,7 +541,8 @@ with left:
                         f'<div class="card"><div><b>{name}</b>{flags}</div>'
                         f'<div class="dim mono">{r["sku"]} &middot; {pack} &middot; {loc}</div>'
                         f'<div class="dim">Case of {r["case_size"]} &middot; '
-                        f"Shelf {shelf_cap}{endcap} &middot; refill &lt;{thresh:.0%}</div>"
+                        f"Shelf {shelf_cap}{endcap} &middot; refill &lt;{thresh:.0%} &middot; "
+                        f"${price:.2f} each</div>"
                         f'<div class="bar" style="margin:6px 0">'
                         f'<div class="fill" style="width:{width:.0f}%;'
                         f"background:{color}\"></div></div>"
@@ -481,11 +629,18 @@ with right:
                     unsafe_allow_html=True,
                 )
                 if st.button("Verify dock", key=f"dock_{tid}"):
-                    st.session_state.done_tasks[tid] = time.time()
-                    try:
-                        publish_confirmation(store, t["sku"], tid, "done", adj)
-                    except Exception as e:
-                        st.toast(f"publish failed ({type(e).__name__}) — will retry", icon="⚠")
+                    send, held = sendable_cases(t, adj)
+                    if send <= 0 and adj > 0:
+                        st.toast(held or "Nothing to fetch", icon="⚠")
+                    else:
+                        if held:
+                            st.toast(held, icon="⚠")
+                        st.session_state.done_tasks[tid] = time.time()
+                        try:
+                            publish_confirmation(store, t["sku"], tid, "done", send)
+                        except Exception as e:
+                            st.toast(f"publish failed ({type(e).__name__}) — will retry",
+                                     icon="⚠")
                 continue
             nameline = (f'<b>{name}</b> &middot; '
                         f'<span class="dim mono">{t["sku"]} &middot; {loc}</span>')
@@ -501,11 +656,15 @@ with right:
             )
             b1, b2, b3, b4 = st.columns([3, 1, 1, 1.4])
             if b1.button("Restock done", key=f"done_{tid}", type="primary"):
-                st.session_state.done_tasks[tid] = time.time()
-                try:
-                    publish_confirmation(store, t["sku"], tid, "done", adj)
-                except Exception as e:
-                    st.toast(f"publish failed ({type(e).__name__}) — will retry", icon="⚠")
+                send, held = sendable_cases(t, adj)
+                if held:
+                    st.toast(held, icon="⚠")
+                if send > 0:
+                    st.session_state.done_tasks[tid] = time.time()
+                    try:
+                        publish_confirmation(store, t["sku"], tid, "done", send)
+                    except Exception as e:
+                        st.toast(f"publish failed ({type(e).__name__}) — will retry", icon="⚠")
             if b2.button("−1", key=f"m_{tid}"):
                 st.session_state.adj[tid] = max(adj - 1, 0)
             if b3.button("+1", key=f"p_{tid}"):
@@ -571,25 +730,32 @@ with right:
         # Honor a pending clear BEFORE the multiselect below: assigning a
         # widget key pre-instantiation is legal (post-instantiation raises),
         # so the click handler only sets this flag for the next run.
-        zeros = [r["sku"] for r in
-                 q("SELECT sku FROM shelf_state WHERE store_id=%s AND zero_flag", (store,))]
+        goods = [r["sku"] for r in
+                 q("SELECT sku FROM shelf_state WHERE store_id=%s AND boh < case_size",
+                   (store,))]
+        stocked = [r["sku"] for r in
+                   q("SELECT sku FROM shelf_state WHERE store_id=%s"
+                     " AND zero_flag AND boh >= case_size", (store,))]
         all_skus = [r["sku"] for r in
                     q("SELECT sku FROM shelf_state WHERE store_id=%s ORDER BY 1", (store,))]
         if st.session_state.pop("_clear_truck_pick", False):
-            # Dispatch acknowledged: empty the picker, remember the zeros
-            # so *fresh* zeros later re-arm the preselect (below).
+            # Dispatch acknowledged: empty the picker and snapshot zeros.
             st.session_state["truck_pick"] = []
-            st.session_state["_truck_base_zeros"] = list(zeros)
-        elif (st.session_state.get("truck_pick") == []
-              and "_truck_base_zeros" in st.session_state
-              and set(zeros) != set(st.session_state["_truck_base_zeros"])):
-            # Zero set changed since the last dispatch and the user hasn't
-            # composed anything: drop the key so the default re-applies.
-            st.session_state.pop("truck_pick", None)
-            st.session_state.pop("_truck_base_zeros", None)
-        pick = st.multiselect("Truck SKUs (zero-flag preselected)", all_skus,
-                              default=[z for z in zeros if z in all_skus], key="truck_pick",
+            st.session_state["_truck_zeros_seen"] = list(goods)
+        else:
+            merged, seen = merge_newcomers(
+                st.session_state.get("truck_pick"),
+                st.session_state.get("_truck_zeros_seen", []),
+                goods, all_skus)
+            if merged is not None:
+                st.session_state["truck_pick"] = merged
+            st.session_state["_truck_zeros_seen"] = seen
+        pick = st.multiselect("Truck SKUs (building needs goods)", all_skus,
+                              default=[g for g in goods if g in all_skus], key="truck_pick",
                               disabled=disabled)
+        if stocked:
+            st.caption("Shelf empty but stocked — auto re-checked on arrival, "
+                       f"send an associate instead: {', '.join(sorted(stocked))}")
         if st.button("Send truck now", key="truck_go", disabled=disabled or not pick):
             if claim_cmd("truck_now", {"store_id": store, "skus": pick}):
                 st.toast(f"Truck dispatched to {store} ({len(pick)} SKUs)")

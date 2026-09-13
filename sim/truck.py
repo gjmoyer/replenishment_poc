@@ -35,7 +35,7 @@ class TruckSim:
         self._adhoc.append((minute, skus))
 
     def manifest_at(
-        self, minute: int, zero_skus: list[str], all_skus: list[str]
+        self, minute: int, need_goods: list[str], all_skus: list[str]
     ) -> list[str] | None:
         scheduled = minute in self.schedule_min
         adhoc_now = [skus for m, skus in self._adhoc if m == minute]
@@ -43,7 +43,7 @@ class TruckSim:
         if not scheduled and not adhoc_now:
             return None
         known = set(all_skus)
-        manifest = [s for s in zero_skus if s in known]
+        manifest = [s for s in need_goods if s in known]
         rng = _seeded(self.seed, self.store_id, minute)
         pool = [s for s in all_skus if s not in manifest]
         manifest += rng.sample(pool, min(2, len(pool)))

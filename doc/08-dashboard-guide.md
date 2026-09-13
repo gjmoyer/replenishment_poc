@@ -65,8 +65,10 @@ decision service and will re-fire if the shelf is still low.
 
 ## Inject events
 
-- **Send truck now** — zero-flagged SKUs preselected; delivers a manifest
-  plus dock-to-backroom receipts minutes later. The on-demand rescue tool.
+- **Send truck now** — the picker lists SKUs whose building can't cover
+  one case (preselected). Below it, shelf-empty-but-stocked SKUs are named
+  with the guidance to send an associate instead: they are auto re-checked
+  on every truck arrival, but the truck carries nothing they need.
 - **Burst** — force N sales on one SKU to trigger a restock immediately.
 - **Scenario buttons** — restart the day with promo rush, 2h bulk thrash,
   silent OOS, or receipt spike. Each restarts the day; that is intended.
@@ -104,3 +106,6 @@ a Restart button.
 **Red bar + open task = normal, go fetch. Red bar + no task = read the
 log** — it was suppressed with a stated reason (endcap likely full,
 bulk debounce, BOH can't cover a case) or it is waiting on a truck.
+Exception: an empty shelf WITH backroom stock always tasks immediately
+(`zero_fetch`) — if you see shelf 0, BOH high, and no card, that is a bug,
+not patience.

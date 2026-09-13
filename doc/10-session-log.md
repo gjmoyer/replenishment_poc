@@ -58,6 +58,33 @@ resuming this repo should read `README.md`, `09`, then this file.
    test with `PYTHONHASHSEED=0` vs `1` (`tests/test_sim.py`).
 7. **Wrong Redpanda image + PG18 mount failure.** See decisions table.
    Both were fixed by reading the actual error output, not docs.
+8. **Negative avg restock (−129 min for cereal).** A restart left stale
+   pre-restart Kafka messages in flight; the fresh decision service
+   accepted a sim-730 event into a sim-432 day and emitted a
+   future-stamped task, which a confirm then closed "early". Fix:
+   epoch-fencing — runner/dashboard stamp every message with the
+   day-epoch, decision adopts higher epochs (reset + process) and drops
+   lower ones (`note_epoch`, `decision/service.py`). Report now excludes
+   non-positive restock times with a footnote instead of averaging them.
+9. **Truck picker missed fresh zeros.** The query was correct
+   (`zero_flag OR boh <= 0`) but Streamlit multiselect defaults apply only
+   on first render, so SKUs hitting zero later never appeared. Fix: track
+   seen zeros and append newcomers, preserving manual picks/deselects
+   (`merge_newcomers`, `dashboard/pickutil.py`, unit-tested). Related find
+   in the same session: confirmations for more cases than BOH cover minted
+   phantom shelf (live proof: shelf 12 / BOH 8) — now clamped at UI send,
+   service apply, and state-transition levels with the `0 <= shelf <= boh`
+   invariant in `decision/state.py`.
+10. **Milk on the truck with 203 in the backroom.** Shelf-zero and
+    building-empty were conflated: every zero waited for a truck, so
+    stocked zeros sat taskless (the 11-zero day-end). Split implemented:
+    zero + backroom cover → immediate `zero_fetch` task (rule-direct, no
+    truck); zero + empty building → marker/wait/check as before. Manifest
+    now lists only goods-needy SKUs (`boh < case_size`); every arrival
+    still re-checks non-manifest zeros as a wake-up call. Picker split
+    into "building needs goods" vs "shelf empty but stocked — send an
+    associate". Loop drain zeroes BOH too (parity with the runner's
+    correction), preserving the silent-OOS truck-rescue demo.
 
 ## Critic history (AI subagents, this session — no human review yet)
 

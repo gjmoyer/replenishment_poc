@@ -113,3 +113,15 @@ def test_two_stores_diverge():
         per_store[t.store_id] += 1
     assert set(per_store) == {s.store_id for s in STORES}
     assert per_store["store-001"] != per_store["store-002"]
+
+
+def test_lost_sales_accounting_balances():
+    from sim.loop import recoverable_gap
+
+    _, summary = run()
+    lost = sum(summary.lost_gap.values()) + sum(summary.lost_empty.values())
+    assert summary.demand_units == summary.sales_units + lost
+    assert sum(summary.lost_gap.values()) > 0  # shelf gaps must occur to demo
+    rec = recoverable_gap(summary)
+    assert sum(rec.values()) <= sum(summary.lost_gap.values())
+    assert all(v >= 0 for v in rec.values())

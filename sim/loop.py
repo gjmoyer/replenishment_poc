@@ -57,6 +57,14 @@ class DaySummary:
     abandoned_count: int = 0
     suppress_counts: Counter = field(default_factory=Counter)
     sales_units: int = 0
+    demand_units: int = 0
+    # (store, sku) -> units of unmet demand. shelf_gap = shelf empty while
+    # backroom stocked (the replenishment miss); boh_empty = store truly out.
+    lost_gap: Counter = field(default_factory=Counter)
+    lost_empty: Counter = field(default_factory=Counter)
+    gap_events: list[tuple[int, tuple[str, str], int]] = field(default_factory=list)
+    dones: list[tuple[tuple[str, str], int, int]] = field(default_factory=list)
+    # ((store, sku), task_emit_min, done_min)
 
     def count(self, reason: str, before_min: int | None = None) -> int:
         return sum(
@@ -64,6 +72,32 @@ class DaySummary:
             for t in self.tasks
             if t.reason == reason and (before_min is None or t.emit_min <= before_min)
         )
+
+
+def recoverable_gap(summary: DaySummary, sla_min: int = 25,
+                    day_end: int = 22 * 60) -> dict[tuple[str, str], int]:
+    """Gap units arriving >sla_min after a task fired, before it closed.
+
+    Approximation of "recoverable with a faster associate": loss inside
+    [emit+sla, close], where close is done time, next emit for the key, or
+    day end. Methodology is intentionally conservative-documented; see docs.
+    """
+    closes: dict[tuple[tuple[str, str], int], int] = {(k, e): d for k, e, d in summary.dones}
+    emits: dict[tuple[str, str], list[int]] = {}
+    for t in summary.tasks:
+        if t.action == "task":
+            emits.setdefault((t.store_id, t.sku), []).append(t.emit_min)
+    for v in emits.values():
+        v.sort()
+    out: dict[tuple[str, str], int] = {}
+    for minute, key, units in summary.gap_events:
+        for i, e in enumerate(emits.get(key, [])):
+            nxt = emits[key][i + 1] if i + 1 < len(emits[key]) else day_end
+            close = closes.get((key, e), nxt)
+            if e + sla_min < minute <= min(close, nxt):
+                out[key] = out.get(key, 0) + units
+                break
+    return {k: v for k, v in out.items() if v > 0}
 
 
 class DaySim:
@@ -171,12 +205,22 @@ class DaySim:
             for sku, units in self.shoppers[st.store_id].gen_sales(now).items():
                 key = (st.store_id, sku)
                 m = self.shelf[key]
-                units = min(units, m.boh)  # can't sell air: clamp to BOH
-                if units <= 0:
+                self.summary.demand_units += units
+                # A shelf can't hand over more than it holds; anything above
+                # min(BOH, shelf) is unmet demand, split by root cause.
+                sellable = min(units, m.boh, m.shelf_est)
+                lost = units - sellable
+                if lost > 0:
+                    if m.boh > 0:
+                        self.summary.lost_gap[key] += lost
+                        self.summary.gap_events.append((now, key, lost))
+                    else:
+                        self.summary.lost_empty[key] += lost
+                if sellable <= 0:
                     continue
-                m.apply_boh_update(m.boh - units, now)
-                self.sales_ts[key].extend([now] * units)
-                self.summary.sales_units += units
+                m.apply_boh_update(m.boh - sellable, now)
+                self.sales_ts[key].extend([now] * sellable)
+                self.summary.sales_units += sellable
 
     def _apply_receipt(self, store_id: str, sku: str, now: int) -> None:
         m = self.shelf[(store_id, sku)]
@@ -201,9 +245,9 @@ class DaySim:
     def _stage_trucks(self, now: int) -> None:
         all_ids = list(self.skus)
         for st in self.stores:
-            zeros = [sku for (sid, sku), m in self.shelf.items()
-                     if sid == st.store_id and m.zero_flag]
-            manifest = self.trucks[st.store_id].manifest_at(now, zeros, all_ids)
+            need_goods = [sku for (sid, sku), m in self.shelf.items()
+                          if sid == st.store_id and m.boh < self.skus[sku].case_size_units]
+            manifest = self.trucks[st.store_id].manifest_at(now, need_goods, all_ids)
             if manifest is None:
                 continue
             self.log(f"[{fmt(now)}] {st.store_id} TRUCK {manifest}")
@@ -227,8 +271,12 @@ class DaySim:
     def _stage_silent_drain(self, now: int) -> None:
         if self.flags.silent_oos and now == self.flags.silent_drain_min:
             for st in self.stores:
+                # Drain the BUILDING, not just the shelf (parity with the
+                # runner's correction): a silent OOS the truck must rescue
+                # has no stock anywhere, so the zero rule waits for it.
                 m = self.shelf[(st.store_id, self.flags.silent_sku)]
-                m.shelf_est = 0
+                if m.boh > 0:
+                    m.apply_boh_update(0, now)
                 m.zero_flag = True
                 m.zero_since_min = now
                 self.log(f"[{fmt(now)}] {st.store_id} {self.flags.silent_sku}: "
@@ -273,10 +321,12 @@ class DaySim:
                 self.summary.abandoned_count += 1
                 self.log(f"[{fmt(now)}] {key[0]} {key[1]}: task abandoned after {age}m")
             elif age >= self.associate_delay and self._confirm(key, now):
+                self.summary.dones.append((key, o["emit_min"], now))
                 del self.open[key]
         for key in list(self.checks):
             aged = now - self.checks[key]["emit_min"] >= self.associate_delay
             if aged and self._confirm(key, now):
+                self.summary.dones.append((key, self.checks[key]["emit_min"], now))
                 del self.checks[key]
 
     # -- run ---------------------------------------------------------------

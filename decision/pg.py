@@ -8,7 +8,11 @@ from typing import Any
 
 log = logging.getLogger("decision.pg")
 
-DAY_TABLES = ("sales_hist", "tasks", "events", "llm_calls", "shelf_state")
+DAY_TABLES = ("sales_hist", "tasks", "events", "llm_calls", "shelf_state", "lost_sales",
+              # processed is safe to wipe on restart: the epoch fence runs BEFORE
+              # claim_event, so redelivered old-epoch messages are dropped without
+              # needing their ids; same-day recreates never truncate.
+              "processed")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS shelf_state (
@@ -29,10 +33,16 @@ CREATE TABLE IF NOT EXISTS tasks (
   cases INT NOT NULL DEFAULT 0, source TEXT NOT NULL,
   rationale TEXT NOT NULL DEFAULT '', confidence DOUBLE PRECISION NULL,
   status TEXT NOT NULL DEFAULT 'open', wall TIMESTAMPTZ NOT NULL DEFAULT now(),
-  shelf_at_emit INT NULL, boh_at_emit INT NULL
+  shelf_at_emit INT NULL, boh_at_emit INT NULL, done_sim_min INT NULL
 );
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS shelf_at_emit INT NULL;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS boh_at_emit INT NULL;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS done_sim_min INT NULL;
+CREATE TABLE IF NOT EXISTS lost_sales (
+  store_id TEXT NOT NULL, sku TEXT NOT NULL, sim_min INT NOT NULL,
+  units INT NOT NULL, reason TEXT NOT NULL,
+  PRIMARY KEY (store_id, sku, sim_min, reason)
+);
 CREATE INDEX IF NOT EXISTS tasks_store_status ON tasks (store_id, status);
 CREATE TABLE IF NOT EXISTS events (
   id BIGSERIAL PRIMARY KEY, sim_min INT NOT NULL,
@@ -138,6 +148,23 @@ class Store:
     def set_task_status(self, task_id: str, status: str) -> None:
         with self.conn.cursor() as cur:
             cur.execute("UPDATE tasks SET status=%s WHERE task_id=%s", (status, task_id))
+
+    def mark_done(self, task_id: str, sim_min: int) -> None:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE tasks SET status='done', done_sim_min=%s WHERE task_id=%s",
+                (sim_min, task_id),
+            )
+
+    def add_loss(self, store_id: str, sku: str, sim_min: int, units: int, reason: str) -> None:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO lost_sales (store_id, sku, sim_min, units, reason)
+                   VALUES (%s, %s, %s, %s, %s)
+                   ON CONFLICT (store_id, sku, sim_min, reason)
+                   DO UPDATE SET units = lost_sales.units + EXCLUDED.units""",
+                (store_id, sku, sim_min, units, reason),
+            )
 
     def log_event(
         self,

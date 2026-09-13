@@ -12,6 +12,11 @@ All events carry both `sim_ts` (simulated store time) and `wall_ts` (emit time) 
 
 Transport for POC may be real Kafka (Redpanda in Docker) or in-memory bus with same schemas. Schemas must not change between modes.
 
+All three event topics carry `epoch` (the day counter from `sim_control`).
+The decision service adopts higher epochs (reset + process) and drops
+lower ones, so stale pre-restart messages can never emit future-stamped
+tasks into a fresh day (see `10-session-log.md` incident 8).
+
 ## `boh_updates`
 ```json
 {
