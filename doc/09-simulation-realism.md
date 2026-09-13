@@ -83,6 +83,57 @@ Any subset improves the sim. Encode answers as noted; then run
 6. Real associate task time and carry capacity? → `associate_delay_min`,
    and later a labor-capacity model (does not exist yet).
 
+## Export spec for offline replay (what to pull from real stores)
+
+Five CSVs. No PII needed anywhere — event grain suffices, no baskets,
+customers, or loyalty data. Field names mirror `01-data-contracts.md`.
+
+### File 1 — `boh_events.csv` (the core: replays demand + supply)
+One row per inventory change: `store_id, sku, ts (ISO8601, tz-aware),
+boh (units AFTER the event), delta (signed units), reason
+(sale|receipt|correction|return|unknown), event_id (if available)`.
+- `delta < 0` = sale, `delta > 0` = receipt. Per-unit rows ideal;
+  per-minute aggregates (`units`, end `boh`) acceptable.
+- **Corrections/recounts MUST be labeled as such** — an unlabeled recount
+  to zero looks exactly like a demand spike and will poison velocities
+  (same bug class as our silent-drain handling in `sim/loop.py`).
+- Day-opening BOH per `(store, sku)`: explicit snapshot rows preferred
+  (`delta=0, reason=snapshot`); otherwise we take the last `boh` before
+  open as opening and say so.
+
+### File 2 — `truck_arrivals.csv`
+`store_id, arrival_ts, truck_id, sku, units_delivered` (one row per
+SKU on the truck; cases acceptable with case size noted). Quantities let
+us join truck → receipt events and measure the real dock-to-backroom
+delay (sim assumes +5–15 min, `sim/truck.py`).
+
+### File 3 — `associate_restocks.csv` (the labels — most valuable file)
+`task_shown_ts, store_id, sku, suggested_cases (NULL if
+associate-initiated), action (done|adjusted|skipped), cases_stocked,
+completed_ts`. This yields everything the feedback loop needs:
+- **Delay distribution** = `completed_ts − task_shown_ts`, by hour —
+  calibrates `associate_delay_min` (sim: flat 25) and reveals whether
+  evenings actually run slower.
+- **Ground-truth overrides**: `suggested_cases ≠ cases_stocked` →
+  adjusted; `skipped` → rejected. Replay precision/recall scores our
+  fired tasks against what staff really did.
+
+### File 4 — `product_master.csv` (one-time, small)
+`sku, name, shelf_capacity_units (facings), case_size_units, is_promo,
+is_bulk`. Without facings/case sizes we cannot compute `shelf_est` or
+`cases_needed`. Fallback if missing: infer `case_size` from the mode of
+stocked quantities — approximate, flagged wherever used.
+
+### File 5 — `stores.csv` (tiny)
+`store_id, open_time, close_time`. Defaults to 07:00–22:00 if missing.
+
+### Scope + quality bar
+- Minimum: **1 store, 2 full weeks including a weekend** (weekday
+  variation is a first-class model input now — retrieval matches on it).
+- Top ~50 SKUs by volume at minimum; all SKUs preferred.
+- Declare known gaps alongside the export: shrink/theft, returns,
+  substitutions — anything where register sales ≠ inventory movement.
+
 ## Rules for future AI recalibrators
 
 1. Never tune demand to satisfy `assert_acceptance` — tune acceptance to

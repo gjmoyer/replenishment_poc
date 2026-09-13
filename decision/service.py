@@ -33,6 +33,7 @@ from decision.rules import (
     effective_capacity,
     evaluate,
     evaluate_truck,
+    priority_of,
 )
 from decision.state import MutableShelf
 from sim.catalog import stores_from_config
@@ -240,6 +241,7 @@ class Brain:
         store_id, sku = key
         m = self.shelf[key]
         task_id = uuid.uuid4().hex[:12]
+        priority = priority_of(self.snapshot(key, now), reason_code)
         entry = {"task_id": task_id, "emit_min": now, "cases": outcome.cases,
                  "reason": reason_code, "shelf_at_emit": m.shelf_est}
         self.open[key] = entry
@@ -260,14 +262,15 @@ class Brain:
             "emit_sim_min": now, "action": "task", "reason": reason_code,
             "cases": outcome.cases, "source": outcome.source,
             "rationale": rationale, "confidence": outcome.confidence,
-            "status": "open",
+            "status": "open", "priority": priority,
             "shelf_at_emit": m.shelf_est, "boh_at_emit": m.boh,
         }
         self.store.add_task(task)
         self.producer.send("restock_tasks", f"{store_id}:{sku}", task)
         loc = "endcap+aisle" if skus[sku].is_promo else "aisle"
         self.store.log_event(now, store_id, sku, "task",
-                             f"fetch {outcome.cases} cases ({loc}) [{reason_code}]",
+                             f"P{priority} fetch {outcome.cases} cases ({loc})"
+                             f" [{reason_code}]",
                              outcome.source)
         self.persist(key, now, {"task_id": task_id, "cases": outcome.cases})
         return task_id

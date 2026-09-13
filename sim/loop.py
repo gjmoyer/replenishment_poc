@@ -24,6 +24,7 @@ from decision.rules import (
     effective_capacity,
     evaluate,
     evaluate_truck,
+    priority_of,
 )
 from decision.state import MutableShelf
 from sim.catalog import STORES, Sku, Store, build_catalog
@@ -49,6 +50,7 @@ class TaskEvent:
     action: str  # task | check
     reason: str
     cases: int
+    priority: int = 2  # urgency tier at emit (doc/02)
 
 
 @dataclass
@@ -191,9 +193,12 @@ class DaySim:
         store_id, sku = key
         self.open[key] = {"emit_min": now, "cases": cases, "reason": reason}
         self.last_task_emit[key] = now  # only real tasks reset debounce
-        self.summary.tasks.append(TaskEvent(store_id, sku, now, "task", reason, cases))
+        priority = priority_of(self._snapshot(key, now), reason)
+        self.summary.tasks.append(
+            TaskEvent(store_id, sku, now, "task", reason, cases, priority))
         loc = "endcap+aisle" if self.skus[sku].is_promo else "aisle"
-        self.log(f"[{fmt(now)}] {store_id} {sku}: fetch {cases} cases ({loc}) [{reason}]")
+        self.log(f"[{fmt(now)}] {store_id} {sku}: P{priority} fetch {cases} cases "
+                 f"({loc}) [{reason}]")
 
     def _emit_check(self, key: Key, now: int, reason: str) -> None:
         store_id, sku = key

@@ -106,3 +106,34 @@ Handle ordering: if manifest arrives before `boh_updates` receipt, emit task as 
 ## Idempotency / ordering
 - One open task max per `(store,sku)`. New trigger while open → `superseded` (update units) not duplicate.
 - Ignore duplicate `event_id`. Allow late `sim_ts` within 5 sim-min window; older → log + drop.
+
+## Restock priority (urgency tiers)
+Computed once at emit by `priority_of()` (`decision/rules.py`), stored on
+the task row, queue sorts `(priority, emit_min)`. Stable by design —
+supersede refreshes cases, never the tier.
+- **P0 · now** — shelf empty with stock available (`zero_fetch`,
+  `truck_zero` rescues). Losing sales this minute; always worked first.
+- **P1 · soon** — cover below the associate lead time (early-trigger
+  tasks). Stockout imminent unless fetched now.
+- **P2 · routine** — ordinary below-threshold top-ups, including bulk
+  (debounce-gated by design, never urgent).
+- **Checks** (verify dock) are a separate lane, not fetch work: quick
+  verifications that gate rescues, shown alongside the queue.
+
+Why tiers instead of one SLA: a flat 25-minute response treats a bleeding
+promo endcap and a slow bulk top-up identically. Tiers let the associate
+(and later, per-tier SLAs) spend urgency where the loss is.
+
+## Learning the priority system from data (future)
+The tiers above are static rules; the associate + sales record can sharpen
+them (see `04` feedback loop, `09` export spec):
+- **Per-tier SLAs from File 3 delays**: today's flat `associate_delay_min`
+  becomes P0/P1/P2 response targets fitted to real shown→completed times.
+- **Value ranking inside a tier**: order by expected loss avoided ≈
+  velocity × margin × lead time (margin is in the catalog, unused). A
+  bleeding promo soda outranks a slow bulk bag at equal urgency.
+- **Tier escalation**: a P1 open task that keeps falling (`repeat_task`)
+  promotes to P0 instead of merely refreshing cases.
+- **Closed-loop proof**: override/regret rates cut per tier in the
+  dashboard panel — a tier whose P1s get skipped is miscalibrated, and the
+  data says so.

@@ -68,6 +68,27 @@ def cover_min(shelf_est: int, velocity_30m: float) -> float:
     return shelf_est / max(velocity_30m, EPS)
 
 
+# Restock urgency tiers (doc/02). Decided at emit, stored on the task row,
+# queue sorts (priority, emit_min). Stable by design — supersede refreshes
+# cases, never the tier (escalation is future work, see doc/02).
+PRIORITY_NOW = 0  # shelf empty, stock available: losing sales this minute
+PRIORITY_SOON = 1  # cover below associate lead time: stockout imminent
+PRIORITY_ROUTINE = 2  # ordinary below-threshold top-up
+
+
+def priority_of(state: ShelfState, reason_code: str) -> int:
+    """Urgency tier for a freshly emitted task."""
+    if reason_code in ("zero_fetch", "truck_zero") or state.shelf_est <= 0:
+        return PRIORITY_NOW
+    if state.is_bulk:
+        return PRIORITY_ROUTINE  # debounce-gated by design, never urgent
+    if (state.cover_trigger_min is not None and state.velocity_30m > 0
+            and cover_min(state.shelf_est, state.velocity_30m)
+            < state.cover_trigger_min):
+        return PRIORITY_SOON
+    return PRIORITY_ROUTINE
+
+
 @dataclass(frozen=True)
 class ShelfState:
     """Per (store, sku) snapshot the rules evaluate."""

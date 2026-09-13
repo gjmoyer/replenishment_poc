@@ -430,3 +430,33 @@ def test_promo_guard_still_suppresses_when_cover_healthy():
     )
     assert d.action == "suppress"
     assert d.reason_code == "promo_endcap_likely"
+
+
+# --- restock priority tiers (doc/02) ---
+
+
+def test_priority_zero_shelf_is_p0():
+    from decision.rules import priority_of
+
+    assert priority_of(std(shelf_est=0), "zero_fetch") == 0
+    assert priority_of(std(shelf_est=5), "truck_zero") == 0
+    assert priority_of(std(shelf_est=0), "normal_low") == 0
+
+
+def test_priority_critical_cover_is_p1():
+    from decision.rules import priority_of
+
+    d = std(shelf_est=12, velocity_30m=0.5, velocity_120m=0.4,
+            cover_trigger_min=45)
+    assert priority_of(d, "normal_low") == 1
+    assert priority_of(d, "promo_low") == 1
+
+
+def test_priority_routine_otherwise_and_bulk_exempt():
+    from decision.rules import priority_of
+
+    assert priority_of(std(shelf_est=9), "normal_low") == 2  # low, slow
+    # Bulk at critical cover stays routine: debounce-gated by design.
+    d = bulk(shelf_est=2, velocity_30m=0.5, velocity_120m=0.4,
+             cover_trigger_min=45)
+    assert priority_of(d, "bulk_due") == 2

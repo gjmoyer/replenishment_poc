@@ -36,12 +36,14 @@ CREATE TABLE IF NOT EXISTS tasks (
   emit_sim_min INT NOT NULL, action TEXT NOT NULL, reason TEXT NOT NULL,
   cases INT NOT NULL DEFAULT 0, source TEXT NOT NULL,
   rationale TEXT NOT NULL DEFAULT '', confidence DOUBLE PRECISION NULL,
-  status TEXT NOT NULL DEFAULT 'open', wall TIMESTAMPTZ NOT NULL DEFAULT now(),
-  shelf_at_emit INT NULL, boh_at_emit INT NULL, done_sim_min INT NULL
+   status TEXT NOT NULL DEFAULT 'open', wall TIMESTAMPTZ NOT NULL DEFAULT now(),
+   shelf_at_emit INT NULL, boh_at_emit INT NULL, done_sim_min INT NULL,
+   priority INT NOT NULL DEFAULT 2
 );
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS shelf_at_emit INT NULL;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS boh_at_emit INT NULL;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS done_sim_min INT NULL;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority INT NOT NULL DEFAULT 2;
 CREATE TABLE IF NOT EXISTS lost_sales (
   store_id TEXT NOT NULL, sku TEXT NOT NULL, sim_min INT NOT NULL,
   units INT NOT NULL, reason TEXT NOT NULL,
@@ -154,13 +156,14 @@ class Store:
                 """INSERT INTO tasks
                    (task_id, store_id, sku, emit_sim_min, action, reason,
                     cases, source, rationale, confidence, status,
-                    shelf_at_emit, boh_at_emit)
+                    shelf_at_emit, boh_at_emit, priority)
                    VALUES (%(task_id)s, %(store_id)s, %(sku)s, %(emit_sim_min)s,
                            %(action)s, %(reason)s, %(cases)s, %(source)s,
                            %(rationale)s, %(confidence)s, %(status)s,
-                           %(shelf_at_emit)s, %(boh_at_emit)s)
+                           %(shelf_at_emit)s, %(boh_at_emit)s,
+                           %(priority)s)
                    ON CONFLICT (task_id) DO NOTHING""",
-                task,
+                {"priority": 2, **task},
             )
 
     def set_task_status(self, task_id: str, status: str) -> None:

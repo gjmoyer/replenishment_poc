@@ -204,3 +204,10 @@ def test_two_promo_skus_in_catalog():
 
     promos = [s.sku for s in build_catalog() if s.is_promo]
     assert "soda-12pk-101" in promos and "chips-001" in promos
+
+
+def test_task_priorities_span_tiers():
+    _, summary = run()
+    prios = {t.priority for t in summary.tasks if t.action == "task"}
+    assert 0 in prios  # truck rescues / zero_fetch exist seed 42
+    assert 2 in prios  # bulk + routine top-ups

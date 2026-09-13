@@ -585,11 +585,12 @@ with right:
         tasks = q("""SELECT t.task_id, t.sku, t.emit_sim_min, t.action, t.reason, t.cases,
                             t.source, t.rationale, t.confidence, t.status,
                             t.shelf_at_emit, t.boh_at_emit,
+                            COALESCE(t.priority, 2) AS priority,
                             s.is_promo, s.boh, s.shelf_est, s.effective_cap, s.case_size
                      FROM tasks t LEFT JOIN shelf_state s
                        ON s.store_id=t.store_id AND s.sku=t.sku
                      WHERE t.store_id=%s AND t.status='open'
-                     ORDER BY t.emit_sim_min ASC LIMIT 30""", (store,))
+                     ORDER BY priority ASC, t.emit_sim_min ASC LIMIT 30""", (store,))
         prune_session({t["task_id"] for t in tasks})
         st.subheader(f"Task queue ({len(tasks)} open)")
         if not tasks:
@@ -663,8 +664,11 @@ with right:
                 continue
             nameline = (f'<b>{name}</b> &middot; '
                         f'<span class="dim mono">{t["sku"]} &middot; {loc}</span>')
+            prio = ("p-zero", "P0 · now") if t["priority"] == 0 else (
+                ("p-promo", "P1 · soon") if t["priority"] == 1 else ("p-rule", "P2"))
             st.markdown(
                 f'<div class="card"><span class="pill {badge[0]}">{badge[1]}</span> '
+                f'<span class="pill {prio[0]}">{prio[1]}</span> '
                 f'<span class="mono">{t["reason"]}</span> &middot; {age_html} '
                 f'&middot; emitted {emitted}<br>'
                 f"{nameline}<br>"

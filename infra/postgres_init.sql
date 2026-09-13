@@ -36,11 +36,14 @@ CREATE TABLE IF NOT EXISTS tasks (
   status TEXT NOT NULL DEFAULT 'open',  -- open | done | rejected | abandoned | superseded
   wall TIMESTAMPTZ NOT NULL DEFAULT now(),
   shelf_at_emit INT NULL,           -- shelf units when the task fired
-  boh_at_emit INT NULL              -- BOH units when the task fired
+  boh_at_emit INT NULL,             -- BOH units when the task fired
+  done_sim_min INT NULL,
+  priority INT NOT NULL DEFAULT 2   -- 0 stockout / 1 imminent / 2 routine
 );
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS shelf_at_emit INT NULL;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS boh_at_emit INT NULL;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS done_sim_min INT NULL;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority INT NOT NULL DEFAULT 2;
 
 -- Unmet demand. shelf_gap = shelf empty but backroom stocked (the
 -- replenishment miss: faster restocking recovers it). boh_empty = store

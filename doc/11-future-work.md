@@ -3,6 +3,28 @@
 Distilled from the Sept 2026 tuning + learning sessions. Each learning links
 the evidence; each idea links the seam it plugs into.
 
+## The reality gap (the highest-value open work)
+
+Status: nothing here is validated against real data (`09` opens with "no
+real POS data has been provided"). Every demand number — day curve,
+popularities, case sizes, the 25-min associate delay — is invented or tuned
+to look believable. 99.3% fill against invented demand proves the machinery,
+not the policy. Ordered path to evidence:
+
+1. **Offline replay of real history (highest value, no live risk).**
+   Feed historical POS logs (timestamp, SKU, units — one store, one week
+   suffices) through `evaluate()` + the sim loop; score fired tasks against
+   actual staff restocks for precision/recall. Needs a CSV→events harness;
+   no architecture changes, no operations risk.
+2. **Calibration.** Fit demand curves, velocities, case sizes, lead times
+   to the same data (`09` worksheet exists for this). Expect our pars and
+   thresholds to move — that is the point.
+3. **Shadow mode.** Decision service alongside real ops, tasks advisory
+   only; the associate loop (`04` feedback panel) generates honest override
+   labels with zero operational risk.
+4. **Pilot in 1–2 stores**, with override <20% and falling regret as the
+   go/no-go instrument. Only then do the fill-rate numbers mean anything.
+
 ## What we've learned
 
 ### 1. Threshold rules fail fast movers by construction (rules)
@@ -127,9 +149,82 @@ Halve fragment poll rates (task queue at 1s is the prime suspect) and add
 a history-coverage strip (calls per weekday) so cold weekdays are visible
 before they cost decisions.
 
+### K. Daily LLM post-mortem — process improvement (people/ops)
+A scheduled LLM pass over each finished day, answering "how did the
+*operation* run?" rather than "how did the *system* run?". Inputs already
+exist: task shown→completed delays by hour/SKU (`tasks.emit/done_sim_min`),
+skip/adjust rates, suppress regrets, lost sales, override clusters.
+Output is an ops memo for the store manager, and crucially some findings
+are NOT system fixes: evening restocks averaging 41 min vs a 25-min target
+means add floor coverage 17–20h; a 60% skip rate on bulk tasks means
+retrain on bulk policy (or fix the debounce); zero confirmations 12:00–
+13:00 means a lunch coverage gap. Seam: `day_done` trigger → aggregate →
+dedicated prompt (new file, e.g. `v-postmortem.md`) → persisted memo +
+dashboard panel, plus week-over-week trends. This is where associate
+speed and missing feedback become *communicated, actionable* training
+needs instead of silent metric drift.
+
+### L. Instrumentation analytics — system improvement (tech/cost)
+The mirror image of K, for engineers instead of managers. Detailed
+telemetry first (per-service latencies, Kafka consumer lag, PG write
+times, fragment query times, LLM latency/cost per trigger and model,
+cache hit rates, fallback rates) into a metrics store; then the LLM
+analyzes *that* data for system suggestions: widen cache buckets on low
+hit rates, trim prompt context on slow triggers, investigate fallback
+spikes, right-size the reasoner fleet per cost-per-decision. Same
+mechanism as K (scheduled analysis + memo), different data, different
+audience, different backlog. Keep the two prompts and panels separate —
+an ops manager should never have to read about GC pauses, and an engineer
+should never have to read about shift coverage.
+
+### M. DC replenishment — own the `boh_empty` branch
+Everything today optimizes shelf→backroom flow; a truly empty building is
+labeled "DC problem" and abandoned there. Close the loop with order
+proposals to the DC: per-SKU reorder points from demand rate × lead time +
+safety stock, order batching by delivery schedule, waste-aware caps for
+perishables. The `lost_sales` `boh_empty` reason becomes its scoreboard,
+mirroring how `shelf_gap` scores the shelf side. This is the largest
+unbuilt half of replenishment.
+
+### N. Perishables, waste, and shrink
+Milk overstocked is milk poured away — the current math has no cost of
+*too much* stock, only of too little. Add expiry-aware fetch caps
+(don't fetch what can't sell by code date), waste tracking alongside lost
+sales, and shrink reconciliation (register sales ≠ inventory movement)
+feeding the correction path instead of polluting velocity. Grocery
+without this is a dry-goods system wearing a grocery costume.
+
+### O. Labor-capacity scheduling (the system side of staffing)
+Priority tiers assume infinite associate bandwidth; K observes staffing
+gaps but the scheduler doesn't *model* them. Next step: WIP limits per
+associate, shift/speed profiles instead of one flat 25-min delay, and
+pick-path ordering (one trip, several tasks, sensible aisle sequence).
+Per-tier SLAs (doc/02) become capacity-feasible promises instead of hopes.
+
+### P. Promo effectiveness + substitution effects
+The system *executes* promos but never *evaluates* them: lift vs baseline,
+cannibalization of sibling SKUs, endcap waste. Feed post-promo analysis
+back into promo planning (which SKUs deserve the endcap row?) and into
+demand modeling (a milk stockout measurably lifts bread — today's
+independent-SKU demand misses that cross-elasticity entirely).
+
+### Q. Alerting, experimentation, and people-data care
+Three small but load-bearing gaps: (a) **escalation** — repeated regrets
+or aging P0s should page a manager, not wait for a dashboard glance;
+(b) **system-level A/B** — E covers prompts; rules/SLA variants need the
+same guardrailed experiment harness; (c) **sensitivity** — K's memos rate
+human performance by name-able shifts. That data needs access control and
+aggregation floors before it exists, not after.
+
+## Mission boundary (scope gate for everything above)
+This system exists to **reduce missed sales opportunities** — shelf gaps,
+late restocks, wasted trips. An idea belongs here iff it serves that
+mission. Demand forecasting, calendar effects, and planogram compliance
+are out of scope by design, not oversight: forecasting is a separate
+system (velocities + cover triggers already carry the intraday signal),
+and facings belong to merchandising, not replenishment.
+
 ## Explicit non-goals (for now)
 - Fine-tuning the local model: RAG + feedback captures most of the gain
   at POC label volumes; revisit past ~1k labeled outcomes.
-- Cross-day demand forecasting: velocities + cover triggers already carry
-  the intraday signal; forecasting is a separate system.
-- Real calendar effects (holidays, weather): no sim support, no labels.
+- Forecasting, calendar effects, planogram compliance: see mission above.

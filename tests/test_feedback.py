@@ -146,3 +146,16 @@ def test_apply_routed_links_task_to_call(monkeypatch):
     task_id = brain.open[KEY]["task_id"]
     brain.store.link_llm_task.assert_called_once_with(
         brain.store.add_llm_call.return_value, task_id)
+
+
+def test_emit_task_persists_priority():
+    from decision.router import RoutedOutcome
+
+    brain = make_brain(boh=50, shelf_est=0)  # empty shelf, stocked -> P0
+    tid = brain.emit_task(
+        KEY, 600,
+        RoutedOutcome(action="task", reason_code="zero_fetch", cases=3,
+                      source="rule", rationale="r"), "zero_fetch")
+    assert isinstance(tid, str)
+    saved = brain.store.add_task.call_args[0][0]
+    assert saved["priority"] == 0
