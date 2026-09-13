@@ -1,5 +1,15 @@
 __pycache__/
 .venv/
 *.pyc
-uv.lock
 .DS_Store
+
+# Tooling artifacts
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/

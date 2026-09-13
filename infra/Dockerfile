@@ -14,4 +14,5 @@ COPY llm llm
 COPY dashboard dashboard
 COPY config config
 COPY .streamlit .streamlit
+COPY README.md LICENSE ./
 RUN uv sync --frozen --no-dev
