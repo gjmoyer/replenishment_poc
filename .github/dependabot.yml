@@ -8,6 +8,11 @@ updates:
     groups:
       python-deps:
         patterns: ["*"]
+    ignore:
+      # mypy 2.x pulls ast-serialize, which has no wheel for Linux x86_64 on
+      # Python 3.12/3.13 (breaks CI). Revisit once that's resolved upstream.
+      - dependency-name: "mypy"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
