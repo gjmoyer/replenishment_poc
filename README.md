@@ -79,6 +79,10 @@ task needs — each file is self-contained and sized for AI consumption:
 | `06-architecture-techstack.md` | Services, Compose, run modes |
 | `07-milestones-acceptance.md` | Build status, demo script |
 | `08-dashboard-guide.md` | How to operate the monitor |
+| `09-simulation-realism.md` | Real-vs-invented calibration status, retune worksheet |
+| `10-session-log.md` | Session decisions, incidents, handoff notes |
+| `11-future-work.md` | Session learnings + prioritized improvement ideas |
+| `12-scalability.md` | 2,000-store × 10K-SKU evaluation, bottlenecks, pilot vs fleet path |
 
 ## Status
 
