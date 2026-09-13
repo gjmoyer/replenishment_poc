@@ -568,16 +568,32 @@ with right:
         ctl = get_ctl()
         st.subheader("Inject events")
         disabled = ctl["day_done"]
+        # Honor a pending clear BEFORE the multiselect below: assigning a
+        # widget key pre-instantiation is legal (post-instantiation raises),
+        # so the click handler only sets this flag for the next run.
         zeros = [r["sku"] for r in
                  q("SELECT sku FROM shelf_state WHERE store_id=%s AND zero_flag", (store,))]
         all_skus = [r["sku"] for r in
                     q("SELECT sku FROM shelf_state WHERE store_id=%s ORDER BY 1", (store,))]
+        if st.session_state.pop("_clear_truck_pick", False):
+            # Dispatch acknowledged: empty the picker, remember the zeros
+            # so *fresh* zeros later re-arm the preselect (below).
+            st.session_state["truck_pick"] = []
+            st.session_state["_truck_base_zeros"] = list(zeros)
+        elif (st.session_state.get("truck_pick") == []
+              and "_truck_base_zeros" in st.session_state
+              and set(zeros) != set(st.session_state["_truck_base_zeros"])):
+            # Zero set changed since the last dispatch and the user hasn't
+            # composed anything: drop the key so the default re-applies.
+            st.session_state.pop("truck_pick", None)
+            st.session_state.pop("_truck_base_zeros", None)
         pick = st.multiselect("Truck SKUs (zero-flag preselected)", all_skus,
                               default=[z for z in zeros if z in all_skus], key="truck_pick",
                               disabled=disabled)
         if st.button("Send truck now", key="truck_go", disabled=disabled or not pick):
             if claim_cmd("truck_now", {"store_id": store, "skus": pick}):
                 st.toast(f"Truck dispatched to {store} ({len(pick)} SKUs)")
+                st.session_state["_clear_truck_pick"] = True
         c1, c2, c3 = st.columns([3, 1.4, 1.6])
         bsku = c1.selectbox("Burst SKU", all_skus, key="burst_sku", disabled=disabled,
                             label_visibility="collapsed")
