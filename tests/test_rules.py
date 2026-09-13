@@ -353,3 +353,80 @@ def test_confirmation_rejects_negative_cases():
     m = MutableShelf(boh=31, shelf_est=5, effective_cap=24, case_size=6)
     with pytest.raises(ValueError):
         m.apply_confirmation(cases_fetched=-1, now_min=600)
+
+
+# --- cover-aware early trigger (fast movers) ---
+
+
+def test_cover_trigger_fires_above_threshold():
+    # shelf 12/24 = 50% (healthy) but velocity 0.5 -> cover 24 < 45 trigger.
+    d = evaluate(
+        std(shelf_est=12, velocity_30m=0.5, velocity_120m=0.4,
+            cover_trigger_min=45),
+        now_min=600,
+    )
+    assert d.action == "task"
+    assert d.reason_code == "normal_low"
+    assert d.cases >= 1
+
+
+def test_cover_trigger_disabled_preserves_legacy():
+    d = evaluate(
+        std(shelf_est=12, velocity_30m=0.5, velocity_120m=0.4,
+            cover_trigger_min=None),
+        now_min=600,
+    )
+    assert d.action == "no_action"
+    assert d.reason_code == "above_threshold"
+
+
+def test_cover_trigger_ignores_stalled_velocity():
+    d = evaluate(
+        std(shelf_est=12, velocity_30m=0.0, velocity_120m=0.4,
+            cover_trigger_min=45),
+        now_min=600,
+    )
+    assert d.reason_code == "above_threshold"
+
+
+def test_cover_trigger_rejects_nonpositive():
+    with pytest.raises(ValueError):
+        std(cover_trigger_min=0)
+
+
+def test_bulk_exempt_from_cover_trigger():
+    # bulk shelf 4 > floor 2: pct/cover ignored, still suppressed.
+    d = evaluate(
+        ShelfState(boh=20, shelf_est=4, shelf_capacity_units=6, case_size=2,
+                   is_bulk=True, threshold_pct=0.8,
+                   velocity_30m=0.5, velocity_120m=0.4,
+                   cover_trigger_min=45),
+        now_min=600,
+    )
+    assert d.action == "suppress"
+    assert d.reason_code == "bulk_min_units"
+
+
+def test_promo_cover_critical_bypasses_endcap_guard():
+    # High BOH + no spike would suppress, but cover 18 < 45 forces a task.
+    d = evaluate(
+        std(shelf_est=18, shelf_capacity_units=48, case_size=12, is_promo=True,
+            boh=200, velocity_30m=1.0, velocity_120m=0.9,
+            cover_trigger_min=45),
+        now_min=600,
+    )
+    assert d.action == "task"
+    assert d.reason_code == "promo_low"
+    assert d.llm_candidate is True
+
+
+def test_promo_guard_still_suppresses_when_cover_healthy():
+    # Same high-BOH setup but slow velocity -> cover inf, guard holds.
+    d = evaluate(
+        std(shelf_est=18, shelf_capacity_units=48, case_size=12, is_promo=True,
+            boh=200, velocity_30m=0.05, velocity_120m=0.05,
+            cover_trigger_min=45),
+        now_min=600,
+    )
+    assert d.action == "suppress"
+    assert d.reason_code == "promo_endcap_likely"

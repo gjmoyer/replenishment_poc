@@ -33,10 +33,14 @@ class Sku:
 
 
 CORE_SKUS: tuple[Sku, ...] = (
-    Sku("milk-1gal-001", "Milk 1gal", 24, 6, popularity=20, opening_boh=180,
+    # Par levels cover measured peak daily demand + 1 case buffer (15-seed
+    # sweep: downtown milk mean 323/max 358, soda 269/295). Under-par
+    # backrooms caused evening stockouts no shelf rule can fix — the goods
+    # must be in the building before the associate can fetch them.
+    Sku("milk-1gal-001", "Milk 1gal", 24, 6, popularity=20, opening_boh=360,
         multi_unit_prob=0.15, pack="1 gal jug", price=4.29, margin_pct=0.18),
     Sku("soda-12pk-101", "Soda 12-pack (PROMO)", 48, 12, is_promo=True,
-        popularity=14, profile="spiky", opening_boh=225, multi_unit_prob=0.15,
+        popularity=14, profile="spiky", opening_boh=300, multi_unit_prob=0.15,
         pack="12-pack", price=8.99, margin_pct=0.25),
     Sku("dogfood-40lb-007", "Bulk Dog Food 40lb", 6, 2, is_bulk=True,
         popularity=0.8, opening_boh=30, pack="40 lb bag", price=54.99, margin_pct=0.32),
@@ -54,7 +58,7 @@ BASE_FILLERS: tuple[Sku, ...] = (
     Sku("beans-001", "Canned Beans", 36, 12, popularity=5, opening_boh=108,
         pack="15 oz can", price=1.29, margin_pct=0.32),
     Sku("chips-001", "Chips", 30, 6, popularity=7,
-        profile="evening", opening_boh=90, pack="13 oz bag", price=5.49, margin_pct=0.28),
+        profile="evening", opening_boh=130, pack="13 oz bag", price=5.49, margin_pct=0.28),
     Sku("coffee-001", "Coffee", 20, 5, popularity=9,
         profile="morning", opening_boh=90, pack="12 oz bag", price=11.99, margin_pct=0.30),
 )

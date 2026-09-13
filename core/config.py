@@ -28,6 +28,10 @@ class LlmSettings:
     temperature: float = 0.2
     max_tokens: int = 300
     prompt_version: str = "v1"
+    # #2 outcome-aware few-shots: retrieved precedent per reason call.
+    # 0 disables (pure v1 behavior). Pool bounds the retrieval SELECT.
+    history_cases: int = 2
+    history_pool: int = 20
 
 
 @dataclass(frozen=True)
@@ -112,6 +116,15 @@ def load() -> AppConfig:
     timeout = _get_float("LLM_TIMEOUT_S", float(yl.get("timeout_s", 30)))
     if timeout <= 0:
         raise ValueError(f"llm.timeout_s must be > 0, got {timeout}")
+    history_cases = int(os.getenv(
+        "LLM_HISTORY_CASES", yl.get("history_cases", 2)))
+    if history_cases < 0 or history_cases > 3:
+        raise ValueError(
+            f"llm.history_cases must be in [0, 3], got {history_cases}")
+    history_pool = int(yl.get("history_pool", 20))
+    if history_pool <= 0:
+        raise ValueError(
+            f"llm.history_pool must be > 0, got {history_pool}")
 
     seed = int(os.getenv("SIM_SEED", ys.get("seed", 42)))
     stores = tuple(
@@ -129,6 +142,8 @@ def load() -> AppConfig:
             temperature=float(yl.get("temperature", 0.2)),
             max_tokens=int(yl.get("max_tokens", 300)),
             prompt_version=str(yl.get("prompt_version", "v1")),
+            history_cases=history_cases,
+            history_pool=history_pool,
         ),
         sim=SimSettings(
             seed=seed,

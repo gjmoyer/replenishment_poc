@@ -164,8 +164,11 @@ class Runner:
     def stage_receipts(self, now: int) -> None:
         if now in RECEIPT_WAVES_MIN or (self.flags.receipt_spike and now == RECEIPT_SPIKE_MIN):
             for st in self.stores:
+                # Same days-of-supply ranking as sim/loop.py (parity): waves
+                # target lowest BOH/popularity, not lowest absolute BOH.
                 by_boh = sorted(self.skus.values(),
-                                key=lambda s: self.boh[(st.store_id, s.sku)].boh)
+                                key=lambda s: self.boh[(st.store_id, s.sku)].boh
+                                / max(s.popularity, 0.1))
                 for s in by_boh[:RECEIPT_WAVE_SIZE]:
                     self.receipt(st.store_id, s.sku, now)
         for _, store_id, skus in [p for p in self.pending_receipts if p[0] <= now]:

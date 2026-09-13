@@ -15,7 +15,7 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from decision.rules import Decision, cases_needed
 
@@ -48,6 +48,10 @@ class ReasonContext:
     recent_sales: list
     open_task: dict | None
     truck_eta: str | None
+    # Retrieved precedent (doc/04 #2), attached lazily by the service only
+    # on cache miss. Excluded from the cache bucket: identical states share
+    # one verdict, history only changes WHICH examples justify it.
+    past_cases: list = field(default_factory=list)
 
 
 @dataclass
@@ -125,6 +129,7 @@ def call_reasoner(ctx: ReasonContext, timeout_s: float) -> tuple[dict, int, str]
         "recent_sales": list(ctx.recent_sales)[-10:],
         "open_task": ctx.open_task,
         "truck_eta": ctx.truck_eta,
+        "past_cases": list(ctx.past_cases)[-3:],
     }
     input_hash = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:12]
     started = time.perf_counter()

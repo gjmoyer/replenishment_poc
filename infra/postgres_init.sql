@@ -77,8 +77,26 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   input_hash TEXT NOT NULL,
   latency_ms INT NOT NULL,
   fallback BOOLEAN NOT NULL DEFAULT FALSE,
-  output JSONB NOT NULL
+  output JSONB NOT NULL,
+  sim_min INT NOT NULL DEFAULT 0,
+  epoch INT NOT NULL DEFAULT 1,
+  needs_restock BOOLEAN NOT NULL DEFAULT FALSE,
+  task_id TEXT NULL,
+  input JSONB NULL,
+  outcome TEXT NULL,          -- done | adjusted | rejected | abandoned | suppressed_ok | suppressed_regret
+  outcome_sim_min INT NULL,
+  outcome_units INT NULL      -- regret lost-units for suppress verdicts
 );
+ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS sim_min INT NOT NULL DEFAULT 0;
+ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS epoch INT NOT NULL DEFAULT 1;
+ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS needs_restock BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS task_id TEXT NULL;
+ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS input JSONB NULL;
+ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS outcome TEXT NULL;
+ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS outcome_sim_min INT NULL;
+ALTER TABLE llm_calls ADD COLUMN IF NOT EXISTS outcome_units INT NULL;
+CREATE INDEX IF NOT EXISTS llm_calls_task_id ON llm_calls (task_id);
+CREATE INDEX IF NOT EXISTS llm_calls_trigger_wall ON llm_calls (trigger, wall);
 
 CREATE TABLE IF NOT EXISTS sales_hist (
   store_id TEXT NOT NULL,

@@ -19,6 +19,7 @@ import streamlit as st
 from kafka import KafkaProducer
 
 from dashboard.pickutil import merge_newcomers
+from decision.feedback import OVERRIDE_TARGET
 from sim.catalog import build_catalog
 from sim.clock import fmt as fmt_min
 
@@ -784,10 +785,64 @@ with right:
     @st.fragment(run_every=2)
     def llm_panel():
         with st.expander("LLM calls (eval)", expanded=False):
+            fb = q("""
+                SELECT trigger,
+                       COUNT(*) AS n,
+                       SUM(CASE WHEN needs_restock THEN 1 ELSE 0 END) AS restocks,
+                       SUM(CASE WHEN outcome IN ('done','adjusted','rejected')
+                                THEN 1 ELSE 0 END) AS decided,
+                       SUM(CASE WHEN outcome IN ('adjusted','rejected')
+                                THEN 1 ELSE 0 END) AS overrides,
+                       SUM(CASE WHEN task_id IS NULL THEN 1 ELSE 0 END) AS suppressed,
+                       SUM(CASE WHEN outcome='suppressed_regret'
+                                THEN 1 ELSE 0 END) AS regrets,
+                       SUM(CASE WHEN outcome IS NULL THEN 1 ELSE 0 END) AS pending
+                  FROM llm_calls
+                 WHERE fallback = FALSE AND sim_min > 0
+                 GROUP BY trigger ORDER BY n DESC""")
+            if fb:
+                rows = []
+                for r in fb:
+                    decided, ov = r["decided"] or 0, r["overrides"] or 0
+                    supp, reg = r["suppressed"] or 0, r["regrets"] or 0
+                    orate = f"{ov / decided:.0%}" if decided else "—"
+                    rrate = f"{reg / supp:.0%}" if supp else "—"
+                    flag = " ⚠" if decided and ov / decided >= OVERRIDE_TARGET else ""
+                    rows.append({
+                        "trigger": r["trigger"], "calls": r["n"],
+                        "restock": (f"{(r['restocks'] or 0) / r['n']:.0%}"
+                                    if r["n"] else "—"),
+                        f"override (target <{OVERRIDE_TARGET:.0%})": orate + flag,
+                        "suppress regret": rrate,
+                        "pending": r["pending"] or 0,
+                    })
+                st.table(rows)
+                st.caption("Override = associate adjusted cases or skipped ÷ decided "
+                           "restocks. Regret = suppress followed by lost sales in-window. "
+                           "Pending labels land at confirm / abandon / day-end.")
+            else:
+                st.caption("No labeled outcomes yet — history accumulates across "
+                           "days; labels land at confirm / abandon / day-end.")
+            prec = q("""
+                SELECT (SELECT COUNT(*) FROM tasks
+                         WHERE source='llm' AND status='done'
+                           AND done_sim_min IS NOT NULL) AS n_done,
+                       (SELECT COUNT(*) FROM tasks t
+                         WHERE t.source='llm' AND t.status='done'
+                           AND t.done_sim_min IS NOT NULL
+                           AND NOT EXISTS (
+                             SELECT 1 FROM sales_hist s
+                              WHERE s.store_id=t.store_id AND s.sku=t.sku
+                                AND s.sim_min > t.done_sim_min
+                                AND s.sim_min <= t.done_sim_min + 60)) AS wasted""")
+            if prec and (prec[0]["n_done"] or 0):
+                p = prec[0]
+                st.caption(f"Today: LLM restocks that sold through within 60 min: "
+                           f"{p['n_done'] - (p['wasted'] or 0)}/{p['n_done']}.")
             calls = q("""SELECT trigger, model, latency_ms, fallback,
                                 output->>'rationale' AS rationale,
                                 output->>'confidence' AS conf
-                         FROM llm_calls ORDER BY id DESC LIMIT 15""")
+                          FROM llm_calls ORDER BY id DESC LIMIT 15""")
             if not calls:
                 st.caption("No LLM calls yet — exceptions route here.")
             for c in calls:
@@ -802,6 +857,71 @@ with right:
                 )
 
     llm_panel()
+
+
+@st.fragment(run_every=5)
+def top_sellers():
+    st.subheader(f"Top 10 by volume — {store}")
+    sold = {r["sku"]: r["n"] for r in q(
+        "SELECT sku, sum(units) AS n FROM sales_hist"
+        " WHERE store_id=%s GROUP BY 1", (store,))}
+    if not sold:
+        st.caption("No sales yet — the day just started.")
+        return
+    stock = {r["sku"]: r for r in q(
+        "SELECT sku, boh, shelf_est, effective_cap FROM shelf_state"
+        " WHERE store_id=%s", (store,))}
+    per: dict[str, dict] = {}
+    for r in q(
+            "SELECT sku, status, count(*) AS n, coalesce(sum(cases), 0) AS c"
+            " FROM tasks WHERE store_id=%s AND action='task'"
+            " GROUP BY 1, 2", (store,)):
+        d = per.setdefault(r["sku"], {"trips": 0, "cases_in": 0,
+                                      "skipped": 0, "skip_cases": 0})
+        if r["status"] == "done":
+            d["trips"], d["cases_in"] = r["n"], r["c"]
+        elif r["status"] == "rejected":
+            d["skipped"], d["skip_cases"] = r["n"], r["c"]
+    lost = {r["sku"]: r["u"] for r in q(
+        "SELECT sku, sum(units) AS u FROM lost_sales"
+        " WHERE store_id=%s GROUP BY 1", (store,))}
+    rows = []
+    for sku, units in sorted(sold.items(), key=lambda kv: kv[1], reverse=True)[:10]:
+        price, _ = _pm(sku)
+        prod = PRODUCTS.get(sku)
+        st_ = stock.get(sku, {})
+        t = per.get(sku, {"trips": 0, "cases_in": 0,
+                          "skipped": 0, "skip_cases": 0})
+        lost_units = lost.get(sku, 0)
+        rows.append({
+            "Product": prod.name if prod else sku,
+            "Sold": units,
+            "Revenue": round(units * price, 2),
+            "BOH": st_.get("boh", 0),
+            "Shelf": (f"{st_.get('shelf_est', 0)}/{st_.get('effective_cap', 0)}"
+                      if st_ else "—"),
+            "Cases in": t["cases_in"],
+            "Trips": t["trips"],
+            "Skipped": t["skipped"],
+            "Skip cases": t["skip_cases"],
+            "Lost": lost_units,
+            "Fill%": round(100 * units / (units + lost_units), 1) if units + lost_units else 100.0,
+        })
+    st.dataframe(
+        rows,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Revenue": st.column_config.NumberColumn(format="$%.2f"),
+            "Fill%": st.column_config.NumberColumn(format="%.1f%%"),
+        },
+    )
+    st.caption("Cases in = cases on done restocks (tasked quantities). Skipped = tasks the"
+               " associate refused, with their case counts. Lost = unmet demand (shelf gaps +"
+               " store-empty). Fill% = sold ÷ (sold + lost).")
+
+
+top_sellers()
 
 
 @st.fragment(run_every=2)

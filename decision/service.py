@@ -223,15 +223,17 @@ class Brain:
             last_task_min=self.last_emit.get(key),
             has_open_task=key in self.open,
             zero_flag=m.zero_flag, zero_since_min=m.zero_since_min,
+            cover_trigger_min=self.cfg.sim.associate_delay_min + 20,
         )
 
     # -- task emission ----------------------------------------------------
 
     def emit_task(self, key: tuple[str, str], now: int, outcome: RoutedOutcome,
-                  reason_code: str) -> None:
+                  reason_code: str) -> str:
+        """Emit (or refresh) the open task. Returns the owning task_id."""
         if key in self.open:  # one open task max: refresh, never duplicate
             self.refresh_open(key, now, outcome, reason_code)
-            return
+            return self.open[key]["task_id"]
         from sim.catalog import ALL_SKUS
 
         skus = {s.sku: s for s in ALL_SKUS}
@@ -268,6 +270,7 @@ class Brain:
                              f"fetch {outcome.cases} cases ({loc}) [{reason_code}]",
                              outcome.source)
         self.persist(key, now, {"task_id": task_id, "cases": outcome.cases})
+        return task_id
 
     def emit_check(self, key: tuple[str, str], now: int, reason: str) -> None:
         if key in self.checks:
@@ -331,20 +334,99 @@ class Brain:
             return []
         return [by_min.get(m, 0) for m in range(now - 10, now)]
 
+    def _record_llm(self, key: tuple[str, str], now: int, ctx: ReasonContext,
+                      decision: Decision, outcome: RoutedOutcome,
+                      record: dict | None, task_id: str | None) -> None:
+        """Persist one reasoner call with join keys for the feedback loop.
+
+        task_id links restock verdicts to their task row (outcomes land via
+        set_llm_outcome at confirm/abandon); suppress verdicts keep NULL and
+        are labeled at day-end finalize from lost_sales (doc/04).
+        """
+        if not record:
+            return
+        from decision.history import weekday_of
+
+        record.update({
+            "sim_min": now,
+            "epoch": self.epoch,
+            "needs_restock": bool(record["output"].get(
+                "needs_restock", outcome.action == "task")),
+            "task_id": task_id,
+            "input": {
+                "shelf_est": ctx.shelf_est, "boh": ctx.boh,
+                "effective_cap": ctx.effective_cap,
+                "case_size": ctx.case_size,
+                "threshold_pct": ctx.threshold_pct,
+                "is_promo": ctx.is_promo, "is_bulk": ctx.is_bulk,
+                "velocity_30m": ctx.velocity_30m,
+                "velocity_120m": ctx.velocity_120m,
+                "recent_sales": list(ctx.recent_sales),
+                "has_open_task": ctx.open_task is not None,
+                "rule_cases": decision.cases,
+                "rule_reason": decision.reason_code,
+                "sim_min": now,
+                "weekday": weekday_of(ctx.sim_ts),
+            },
+        })
+        call_id = self.store.add_llm_call(record)
+        if task_id is not None and call_id is not None:
+            self.store.link_llm_task(call_id, task_id)
+        self.store.log_event(
+            now, key[0], key[1], "llm",
+            f"{ctx.trigger}: restock={record['output'].get('needs_restock')} "
+            f"conf={record['output'].get('confidence')}",
+            outcome.source,
+        )
+
+    def _history_for(self, ctx: ReasonContext, now: int) -> list:
+        """Retrieve labeled precedent for outcome-aware few-shots (doc/04 #2).
+
+        Lazy and best-effort: [] on cold start, bad config, or any DB error —
+        the static prompt few-shots carry the decision alone. Never raises.
+        """
+        if self.cfg.llm.history_cases <= 0:
+            return []
+        try:
+            candidates = self.store.recent_labeled_calls(
+                ctx.trigger, self.cfg.llm.history_pool)
+        except Exception as e:
+            log.warning("history retrieval failed: %r", e)
+            return []
+        try:
+            from decision.history import pick_cases, weekday_of
+
+            return pick_cases(
+                {"shelf_est": ctx.shelf_est, "effective_cap": ctx.effective_cap,
+                 "boh": ctx.boh, "velocity_30m": ctx.velocity_30m,
+                 "velocity_120m": ctx.velocity_120m,
+                 "sim_min": now, "weekday": weekday_of(ctx.sim_ts)},
+                candidates, self.cfg.llm.history_cases)
+        except Exception as e:
+            log.warning("history selection failed: %r", e)
+            return []
+
+    def _route_with_history(self, decision: Decision, ctx: ReasonContext,
+                            now: int) -> tuple:
+        """route() with precedent attached — but only on cache miss.
+
+        past_cases is excluded from the cache bucket, so identical states
+        share one verdict without paying a SELECT; history only changes which
+        examples justify a fresh verdict.
+        """
+        if self.cache.get(ctx, now) is None:
+            ctx.past_cases = self._history_for(ctx, now)
+        return route(decision, ctx, now, self.cache, self.timeout_s)
+
     def apply_routed(self, key: tuple[str, str], now: int, decision: Decision,
                      ctx: ReasonContext) -> None:
-        outcome, record = route(decision, ctx, now, self.cache, self.timeout_s)
-        if record:
-            self.store.add_llm_call(record)
-            self.store.log_event(
-                now, key[0], key[1], "llm",
-                f"{ctx.trigger}: restock={record['output'].get('needs_restock')} "
-                f"conf={record['output'].get('confidence')}",
-                outcome.source,
-            )
+        outcome, record = self._route_with_history(decision, ctx, now)
         if outcome.action == "task":
-            self.emit_task(key, now, outcome, decision.reason_code)
-        elif outcome.action in ("suppress", "no_action"):
+            task_id = self.emit_task(key, now, outcome, decision.reason_code)
+        else:
+            task_id = None
+        self._record_llm(key, now, ctx, decision, outcome, record, task_id)
+        if outcome.action in ("suppress", "no_action"):
             if outcome.suppress_until_min:
                 self.suppress_until[key] = now + outcome.suppress_until_min
             prev = self.last_suppress_log.get((key[0], key[1], decision.reason_code), -10**9)
@@ -374,11 +456,14 @@ class Brain:
                     llm_candidate=True, llm_trigger="repeat_task",
                 )
                 ctx = self.build_ctx(key, now, "repeat_task", sim_ts)
-                outcome, record = route(forced, ctx, now, self.cache, self.timeout_s)
-                if record:
-                    self.store.add_llm_call(record)
+                outcome, record = self._route_with_history(forced, ctx, now)
                 if outcome.action == "task":
                     self.refresh_open(key, now, outcome, decision.reason_code)
+                    self._record_llm(key, now, ctx, forced, outcome, record,
+                                     o["task_id"])
+                else:
+                    self._record_llm(key, now, ctx, forced, outcome, record,
+                                     None)
                 return
             self.refresh_open(key, now, RoutedOutcome(
                 action="task", reason_code=decision.reason_code,
@@ -589,6 +674,7 @@ class Brain:
         log.info("confirm %s %s action=%s cases=%s task=%s",
                  store_id, sku, action, cases, msg.get("task_id"))
         self.last_now = max(self.last_now, now)
+        asked_cases = cases  # associate intent, pre-BOH-clamp (feedback loop)
         if action != "reject":
             # Never shelve more than the building holds: clamp to BOH cover.
             # A stale task (cases decided when stock existed) must not mint
@@ -615,12 +701,18 @@ class Brain:
             self.suppress_until[key] = now + REJECT_SUPPRESS_MIN
             if o:
                 self.store.set_task_status(o["task_id"], "rejected")
+                self.store.set_llm_outcome(o["task_id"], "rejected", now)
             self.store.log_event(now, store_id, sku, "confirm",
                                  f"rejected by associate; quiet {REJECT_SUPPRESS_MIN}m", None)
         else:
             self.shelf[key].apply_confirmation(cases, now)
             if o:
+                from decision.feedback import classify_confirm
+
                 self.store.mark_done(o["task_id"], now)
+                self.store.set_llm_outcome(
+                    o["task_id"],
+                    classify_confirm(o["cases"], asked_cases, action), now)
             self.store.log_event(now, store_id, sku, "confirm",
                                  f"restocked {cases} cases (associate)", None)
         self.persist(key, now, None)
@@ -631,6 +723,7 @@ class Brain:
             if now - o["emit_min"] >= timeout:
                 del self.open[key]
                 self.store.set_task_status(o["task_id"], "abandoned")
+                self.store.set_llm_outcome(o["task_id"], "abandoned", now)
                 self.store.log_event(now, key[0], key[1], "abandon",
                                      f"open {timeout}m, abandoned", None)
                 self.persist(key, now, None)
@@ -653,6 +746,7 @@ class Brain:
                 if key in self.open and self.open[key]["task_id"] == task_id:
                     continue  # memory owns it; handled above
                 self.store.set_task_status(task_id, "abandoned")
+                self.store.set_llm_outcome(task_id, "abandoned", now)
                 self.store.log_event(now, sid, sku, "abandon",
                                      f"open >{timeout}m (backstop), abandoned", None)
                 if key in self.shelf:

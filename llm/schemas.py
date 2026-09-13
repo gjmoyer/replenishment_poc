@@ -35,6 +35,33 @@ class OpenTask(BaseModel):
     emit_min: int = Field(ge=0, description="sim-minutes since midnight")
 
 
+class PastCase(BaseModel):
+    """One retrieved precedent: compact state + verdict + known outcome.
+
+    Rationale is truncated at the boundary (200 chars) — precedent for
+    pattern-matching, not a script to copy. Outcome vocabulary mirrors
+    decision/feedback.py.
+    """
+
+    shelf_est: int = Field(ge=0, description="UNITS at decision time")
+    effective_capacity: int = Field(gt=0, description="UNITS")
+    boh: int = Field(ge=0, description="UNITS at decision time")
+    velocity_30m: float = Field(ge=0)
+    velocity_120m: float = Field(ge=0)
+    # Sim weekday of the precedent (Mon..Sun, ? if unknown). Retail days
+    # differ — a Saturday-evening precedent means more on a Saturday.
+    weekday: str = Field(default="?")
+    needs_restock: bool
+    outcome: Literal["done", "adjusted", "rejected", "abandoned",
+                     "suppressed_ok", "suppressed_regret"]
+    rationale: str = Field(min_length=1, max_length=200)
+
+    @field_validator("rationale", mode="before")
+    @classmethod
+    def _truncate_rationale(cls, v: object) -> object:
+        return v[:200] if isinstance(v, str) else v
+
+
 SaleUnit = Annotated[int, Field(ge=0)]
 
 
@@ -48,6 +75,9 @@ class ReasonRequest(BaseModel):
     recent_sales: list[SaleUnit] = Field(default_factory=list, max_length=10)
     open_task: OpenTask | None = None
     truck_eta: str | None = None
+    # Retrieved precedent: labeled past same-trigger cases (see doc/04 #2).
+    # EXAMPLES only — decide the CURRENT case above. Empty on cold start.
+    past_cases: list[PastCase] = Field(default_factory=list, max_length=3)
 
 
 class ReasonDecision(BaseModel):

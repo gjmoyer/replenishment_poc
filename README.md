@@ -87,3 +87,11 @@ manual restock/adjust/skip, truck rescue flow, scenarios, day-end summary,
 PG-backed exactly-once processing and restart resume. See `07` for details.
 
 MIT licensed. Built as a learning vehicle for LLM-in-the-loop retail ops.
+
+## Dashboard
+
+![Live ops console mid-day: shelf grid with velocities and cover, open restock tasks with rule rationales, event log with LLM repeat-task reviews, and the top-10-by-volume table.](doc/dashboard.png)
+
+Mid-day at the Downtown store — milk running hot with an open fetch task,
+eggs silently empty awaiting the 14:00 truck rescue, the event log showing
+an LLM `repeat_task` review, and per-product fill rates in the Top 10 table.

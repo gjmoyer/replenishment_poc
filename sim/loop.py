@@ -37,6 +37,8 @@ NOON_MIN = 12 * 60
 RECEIPT_WAVES_MIN = (8 * 60, 15 * 60)
 RECEIPT_SPIKE_MIN = 12 * 60
 RECEIPT_WAVE_SIZE = 4  # SKUs per scheduled wave
+# Early-fetch buffer on top of associate_delay: task when cover < delay+buffer.
+COVER_TRIGGER_BUFFER_MIN = 20
 
 
 @dataclass
@@ -182,6 +184,7 @@ class DaySim:
             has_open_task=key in self.open,
             zero_flag=m.zero_flag,
             zero_since_min=m.zero_since_min,
+            cover_trigger_min=self.associate_delay + COVER_TRIGGER_BUFFER_MIN,
         )
 
     def _emit_task(self, key: Key, now: int, reason: str, cases: int) -> None:
@@ -229,8 +232,14 @@ class DaySim:
     def _stage_receipts(self, now: int) -> None:
         if now in RECEIPT_WAVES_MIN or (self.flags.receipt_spike and now == RECEIPT_SPIKE_MIN):
             for st in self.stores:
+                # Days-of-supply targeting: absolute BOH starves fast movers
+                # (milk BOH 177 looks "healthy" vs dogfood 30, but covers
+                # far fewer hours). Rank by BOH/popularity so waves go where
+                # hours-of-cover are lowest.
                 lowest = sorted(
-                    self.skus.values(), key=lambda s: self.shelf[(st.store_id, s.sku)].boh
+                    self.skus.values(),
+                    key=lambda s: self.shelf[(st.store_id, s.sku)].boh
+                    / max(s.popularity, 0.1),
                 )[:RECEIPT_WAVE_SIZE]
                 for s in lowest:
                     self._apply_receipt(st.store_id, s.sku, now)
@@ -323,11 +332,20 @@ class DaySim:
             elif age >= self.associate_delay and self._confirm(key, now):
                 self.summary.dones.append((key, o["emit_min"], now))
                 del self.open[key]
+                # One physical refill fulfills both: drop a sibling check so
+                # it can't orphan this task (or vice versa below).
+                self.checks.pop(key, None)
         for key in list(self.checks):
             aged = now - self.checks[key]["emit_min"] >= self.associate_delay
             if aged and self._confirm(key, now):
                 self.summary.dones.append((key, self.checks[key]["emit_min"], now))
                 del self.checks[key]
+                if key in self.open:
+                    # Check matured first and took the refill; the open task
+                    # is fulfilled, not abandoned — close it without
+                    # double-counting the physical restock.
+                    o = self.open.pop(key)
+                    self.summary.dones.append((key, o["emit_min"], now))
 
     # -- run ---------------------------------------------------------------
 

@@ -66,3 +66,70 @@ Few-shots: (a) promo ambiguous → restock 2 cases, endcap likely empty given 3x
 1. Notebook: replay 20 logged exceptions, compare prompts.
 2. Ablation: disable LLM → count extra bulk tasks + promo false positives (proves value).
 3. Tune `suppress_until_min` from feedback.
+
+## Feedback loop (implemented)
+
+Every reasoner call is a training row, not a log line. `llm_calls` is a
+**persistent history table** (deliberately excluded from day-table
+truncation) with join keys written at decision time: `sim_min`, `epoch`,
+`needs_restock`, the linked `task_id` (restock path; NULL when suppressed),
+and an `input` JSON snapshot of the decision-time state (shelf/BOH,
+velocities, recent sales, rule cases). Outcomes are materialized into
+`outcome` (`done | adjusted | rejected | abandoned | suppressed_ok |
+suppressed_regret`):
+
+- Restock path: labeled online — `on_confirm` compares associate-fetched
+  cases to tasked cases (`adjusted` vs `done`; BOH clamps don't count),
+  `reject` → `rejected`, task timeout → `abandoned`.
+- Suppress path: labeled at day-end `finalize_llm_outcomes()` (runs inside
+  `truncate_day`, before the raw tables go away) — `suppressed_regret` iff
+  lost sales for the key landed in `[call, call + clamp(suppress_until,
+  30, 90)]`.
+
+Feedback metrics (normative definitions in `decision/feedback.py`, shown
+per-trigger in the dashboard LLM panel):
+
+- `override_rate = (adjusted + rejected) / decided` — target **< 20%**.
+  Breaches flag the trigger row for prompt/policy review.
+- `regret_rate = suppressed_regret / suppressed` — suppress discipline.
+- Restock precision (today only): share of `done` LLM tasks followed by
+  sales within 60 sim-min vs. wasted trips.
+
+This is the label source for the next steps: outcome-aware few-shots
+(#2 — retrieve past same-trigger cases with known outcomes into the
+prompt) and eventually fine-tuning. Fallback rows (`fallback=TRUE`) are
+rule decisions, excluded from model-quality denominators.
+
+## Outcome-aware few-shots (implemented, prompt v2)
+
+Static few-shots teach the policy; retrieved precedent teaches the
+boundary. On every cache-miss reason call the decision service attaches up
+to `history_cases` (default 2, cap 3, `0` disables) labeled past
+same-trigger cases as `past_cases` in the request:
+
+- Candidates: most recent labeled, non-fallback same-trigger rows
+  (`Store.recent_labeled_calls`, pool default 20).
+- Selection (`decision/history.py`, pure): rank by distance in scale-free
+  feature space `(shelf_pct, boh_cover, velocity_ratio)`; pick the closest
+  success AND the closest mistake (diversity first — a `done` plus a
+  `suppressed_regret` teaches more than three successes). Cold start
+  returns `[]` and the static few-shots decide alone.
+- Days differ, so matching is temporal too: circular time-of-day distance
+  on `sim_min` (evening rush ≠ morning lull at identical shelf readings)
+  plus a soft same-weekday bonus from the `weekday` stored in each input
+  snapshot. The bonus is deliberately soft, not a filter — sparse triggers
+  can't afford hard weekday matching, and a Tuesday precedent still beats
+  none on Saturday. Legacy snapshots without temporal keys score neutral.
+  Practical consequence: history must span full weeks before every weekday
+  has same-day precedent. The persistent `llm_calls` table accumulates this
+  automatically (~10s of rows/day, no prune job at POC scale); the first
+  week runs progressively less cold each day.
+- The v2 prompt (`llm/prompts/v2.md`) marks precedent as EXAMPLES with an
+  outcome vocabulary (`done` worked, `adjusted`/`rejected` were overridden,
+  `suppressed_regret` was wrong, `abandoned` is a weak negative) and
+  forbids citing past numbers as current fact. Quantity guardrails are
+  unchanged: precedent advises, `cases_needed()` still owns the number.
+- Fetch is lazy (only on LLM-cache miss; `past_cases` is excluded from the
+  cache bucket) and best-effort (any DB error → `[]`, never blocks rules).
+- Eval is built in: `prompt_version` is logged per call, so v1 vs v2
+  compares directly on override/regret rates in the dashboard panel.

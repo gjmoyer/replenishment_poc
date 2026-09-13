@@ -31,8 +31,17 @@ Each store gets a different seed + rate multiplier (e.g. Downtown 1.2x, Suburb 0
 
 ## Receipt / BOH-increase publisher
 Models backroom replenishment from DC, separate from shelf restocking:
-- Scheduled receipts at 08:00 + 15:00 sim (configurable): pick 3–5 SKUs, `BOH += case_size * N`.
+- Scheduled receipts at 08:00 + 15:00 sim (configurable): pick the 4 SKUs
+  with the lowest days-of-supply (`BOH / popularity`), `BOH += case_size * N`.
+  Ranking by absolute BOH starved fast movers (milk at 177 looks "healthy"
+  next to dogfood at 30 but covers far fewer hours), so waves target cover.
 - Emits `boh_updates` with `reason=receipt`, `delta>0`.
+
+Catalog par levels cover measured peak daily demand + 1 case buffer
+(15-seed sweep: downtown milk mean 323/max 358 → opening 360; soda
+269/295 → 300; chips 109/124 → 130). Under-par backrooms caused evening
+stockouts no shelf rule can fix — the goods must be in the building
+before the associate can fetch them.
 
 This must NOT auto-fill shelf — shelf only fills on associate confirmation. Tests that distinction.
 

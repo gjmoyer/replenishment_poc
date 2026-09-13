@@ -125,3 +125,48 @@ def test_lost_sales_accounting_balances():
     rec = recoverable_gap(summary)
     assert sum(rec.values()) <= sum(summary.lost_gap.values())
     assert all(v >= 0 for v in rec.values())
+
+
+def test_receipt_waves_target_lowest_days_of_supply():
+    """Waves must prefer fast movers (milk) over absolute-low slow movers."""
+    from collections import Counter
+
+    from sim.loop import DaySim
+
+    sim = DaySim(seed=42, flags=ScenarioFlags(), verbose=False)
+    receipts: Counter = Counter()
+    orig = sim._apply_receipt
+
+    def counting(store_id, sku, now, _o=orig):
+        receipts[(store_id, sku)] += 1
+        return _o(store_id, sku, now)
+
+    sim._apply_receipt = counting
+    sim.run()
+    # Milk (popularity 20, highest demand) must get at least one receipt;
+    # with days-of-supply targeting it is no longer starved by absolute-BOH
+    # ranking (baseline gave store-002 soda zero receipts).
+    assert receipts[("store-001", "milk-1gal-001")] >= 1
+    assert receipts[("store-002", "milk-1gal-001")] >= 1
+
+
+def test_check_confirm_closes_sibling_open_task_as_done():
+    """Check maturing first must not orphan the open task into abandon."""
+    from sim.loop import DaySim
+
+    sim = DaySim(seed=42, flags=ScenarioFlags(), verbose=False)
+    key = ("store-001", "eggs-12ct-005")
+    # Recreate the race: check (emit 840) + task (emit 850), receipt landed.
+    m = sim.shelf[key]
+    m.apply_boh_update(48, 850)
+    m.zero_flag = True
+    m.zero_since_min = 780
+    sim.checks[key] = {"emit_min": 840, "reason": "truck_zero"}
+    sim.open[key] = {"emit_min": 850, "cases": 3, "reason": "zero_fetch"}
+    sim.last_task_emit[key] = 850
+    aband_before = sim.summary.abandoned_count
+    sim._stage_confirm(865 + 25)  # both matured; check confirms first
+    assert key not in sim.open
+    assert key not in sim.checks
+    assert sim.summary.abandoned_count == aband_before
+    assert sim.shelf[key].shelf_est == 36

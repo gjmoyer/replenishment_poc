@@ -88,6 +88,11 @@ class ShelfState:
     has_open_task: bool = False
     zero_flag: bool = False
     zero_since_min: int | None = None
+    # Velocity-aware early trigger: fire when minutes-of-cover drops below
+    # this even if pct is still healthy. None = disabled (legacy pct-only).
+    # Callers set it to associate_delay + buffer (e.g. 25 + 10 = 35) so a
+    # fast mover with 12 min of cover tasks BEFORE it stocks out.
+    cover_trigger_min: float | None = None
 
     def __post_init__(self) -> None:
         if self.boh < 0:
@@ -102,6 +107,8 @@ class ShelfState:
             raise ValueError("threshold_pct must be in (0, 1)")
         if self.velocity_30m < 0 or self.velocity_120m < 0:
             raise ValueError("velocities must be >= 0")
+        if self.cover_trigger_min is not None and self.cover_trigger_min <= 0:
+            raise ValueError("cover_trigger_min must be > 0")
 
     @property
     def effective_cap(self) -> int:
@@ -139,6 +146,20 @@ def _with_open_task_guard(decision: Decision, state: ShelfState) -> Decision:
             llm_trigger=decision.llm_trigger,
         )
     return decision
+
+
+def _cover_early(state: ShelfState) -> float | None:
+    """Minutes-of-cover early trigger. Returns cover if it fires, else None.
+
+    Fires only when a trigger is configured, velocity is positive, and cover
+    is strictly below the trigger. Zero-velocity (stalled) never fires.
+    """
+    if state.cover_trigger_min is None or state.velocity_30m <= 0:
+        return None
+    cover = cover_min(state.shelf_est, state.velocity_30m)
+    if cover < state.cover_trigger_min:
+        return cover
+    return None
 
 
 def evaluate(state: ShelfState, now_min: int) -> Decision:
@@ -182,15 +203,19 @@ def evaluate(state: ShelfState, now_min: int) -> Decision:
             detail=f"zero for {zero_age} sim-min; waiting on truck.",
         )
 
-    # 2. Healthy shelf — nothing to do.
-    if _pct(state) >= state.threshold_pct:
+    # 2. Healthy shelf — nothing to do, unless cover-aware early trigger
+    # fires: a fast mover at 40% with 12 min of cover must task NOW because
+    # the associate needs 25+ min to arrive. Bulk is exempt (floor+debounce
+    # intentionally ignore pct/cover to avoid thrash).
+    early_cover = None if state.is_bulk else _cover_early(state)
+    if _pct(state) >= state.threshold_pct and early_cover is None:
         return Decision(
             action="no_action",
             reason_code="above_threshold",
             detail=f"{state.shelf_est}/{cap} units above {state.threshold_pct:.0%}.",
         )
 
-    # 3. Shelf low — per-type gates.
+    # 3. Shelf low (or early) — per-type gates.
     if state.is_bulk:
         return _with_open_task_guard(_evaluate_bulk(state, now_min), state)
     if state.is_promo:
@@ -211,6 +236,15 @@ def _finalize_task(state: ShelfState, reason_code: str, detail: str) -> Decision
 
 def _evaluate_normal(state: ShelfState) -> Decision:
     cap = state.effective_cap
+    early = _cover_early(state)
+    if early is not None and _pct(state) >= state.threshold_pct:
+        return _finalize_task(
+            state,
+            "normal_low",
+            f"{state.shelf_est}/{cap} units ({_pct(state):.0%}) with "
+            f"{early:.0f} min cover < {state.cover_trigger_min:.0f} min trigger; "
+            "early fetch for fast mover.",
+        )
     return _finalize_task(
         state,
         "normal_low",
@@ -223,8 +257,33 @@ def _evaluate_promo(state: ShelfState) -> Decision:
 
     Suppression is the interesting outcome — it becomes an llm_candidate
     (promo_ambiguous) for the router.
+
+    Cover-critical bypass: when minutes-of-cover drops below the associate
+    lead time, the endcap assumption is unsafe (the sim models no separate
+    endcap buffer — shelf_est IS total). Task immediately rather than
+    draining to zero and paying a 25-min stockout. Still llm_candidate so
+    the live router gets LLM review.
     """
     cap = state.effective_cap
+    early = _cover_early(state)
+    if early is not None:
+        d = _finalize_task(
+            state,
+            "promo_low",
+            f"{state.shelf_est}/{cap} units with {early:.0f} min cover < "
+            f"{state.cover_trigger_min:.0f} min trigger; endcap guard bypassed "
+            f"(BOH {state.boh}, velocity {state.velocity_30m:.2f} u/min).",
+        )
+        if d.action == "task":
+            return Decision(
+                action=d.action,
+                reason_code=d.reason_code,
+                cases=d.cases,
+                detail=d.detail,
+                llm_candidate=True,
+                llm_trigger="promo_ambiguous",
+            )
+        return d
     boh_suggests_empty = state.boh < cap * PROMO_BOH_COVER_FACTOR
     spike = (
         state.velocity_30m > PROMO_SPIKE_FACTOR * state.velocity_120m
@@ -250,11 +309,20 @@ def _evaluate_promo(state: ShelfState) -> Decision:
         f"BOH {state.boh}, velocity {state.velocity_30m:.2f} u/min.",
     )
     if d.action == "task":
+        early = _cover_early(state)
+        detail = d.detail
+        if early is not None and _pct(state) >= state.threshold_pct:
+            detail = (
+                f"{state.shelf_est}/{cap} units ({_pct(state):.0%}) with "
+                f"{early:.0f} min cover < {state.cover_trigger_min:.0f} min; "
+                f"early fetch. BOH {state.boh}, "
+                f"velocity {state.velocity_30m:.2f} u/min."
+            )
         return Decision(
             action=d.action,
             reason_code=d.reason_code,
             cases=d.cases,
-            detail=d.detail,
+            detail=detail,
             llm_candidate=True,
             llm_trigger="promo_ambiguous",
         )

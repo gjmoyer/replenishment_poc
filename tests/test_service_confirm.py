@@ -90,7 +90,7 @@ def test_truck_wake_leaves_empty_building_waiting():
     brain.store.add_task.assert_not_called()
 
 
-MILK = ("store-001", "milk-1gal-001")  # opening 180, cap 24, case 6
+MILK = ("store-001", "milk-1gal-001")  # opening 360, cap 24, case 6
 
 
 def sale_msg(**kw):
@@ -113,10 +113,10 @@ def test_stale_epoch_message_dropped():
 def test_new_epoch_adopts_resets_and_processes():
     brain = make_brain(MILK, boh=100, shelf_est=20, effective_cap=24, case_size=6)
     brain.epoch = 5
-    brain.on_boh(sale_msg(epoch=6, event_id="new"))
+    brain.on_boh(sale_msg(epoch=6, event_id="new", boh=359))
     assert brain.epoch == 6
-    # reseeded to opening (180) then the sale applied: 179 / shelf 23
-    assert brain.shelf[MILK].boh == 179
+    # reseeded to opening (360) then the sale applied: 359 / shelf 23
+    assert brain.shelf[MILK].boh == 359
     assert brain.shelf[MILK].shelf_est == 23
 
 

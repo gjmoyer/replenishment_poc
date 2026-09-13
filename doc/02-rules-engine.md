@@ -49,10 +49,20 @@ If result is 0 → no task even if pct low (BOH-constrained). Emit `suppressed` 
 if shelf_est / effective_capacity < restock_threshold_pct (default 0.35):
     emit task
 ```
+Plus a velocity-aware early trigger: when `cover_trigger_min` is set
+(associate_delay + 20 sim-min buffer) and `shelf_est / velocity_30m` drops
+below it, emit even while pct is still healthy. A fast mover at 50% with
+12 min of cover must task NOW because the associate needs 25+ min to
+arrive — otherwise every cycle pays a stockout inside the SLA window.
+Bulk SKUs are exempt (floor + debounce intentionally ignore pct/cover).
 
 ### Promo SKU (sale + endcap)
 - Use `effective_capacity` (1.5x) in pct check, NOT shelf alone.
 - Extra guard: require `BOH < effective_capacity * 1.2` OR `velocity_30m > 2 * velocity_120m` (spike). Otherwise suppress — stock is probably on endcap.
+- Cover-critical bypass: when cover drops below `cover_trigger_min`, the
+  endcap assumption is unsafe (the sim models no separate endcap buffer),
+  so task immediately instead of draining to zero and paying a 25-min
+  stockout. Still flagged `llm_candidate` for live LLM review.
 - `reason_code = promo_low`.
 
 Why: avoids firing when main shelf dips but endcap still holds 50% extra.
