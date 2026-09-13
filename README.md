@@ -46,13 +46,34 @@ fast path stays exact.
 
 ## How it works
 
-```
-shoppers + trucks (sim) ──► Redpanda ──► decision service ──► dashboard
-                                │              │  ▲                     ▲
-                                │              ▼  │ LLM-only on          │ human
-                                │           Postgres │ exceptions    restocks
-                                │              │  ▼                     │
-                                │         llm-reasoner ──► LM Studio (local, Mac)
+```mermaid
+flowchart LR
+    subgraph SIM["Simulation"]
+        direction TB
+        CLOCK["sim-clock"]
+        SHOP["shopper-sim<br/>(N stores)"]
+        TRUCK["truck-sim"]
+    end
+
+    KAFKA[("Redpanda<br/>Kafka protocol")]
+    DEC["decision-service<br/>rules engine + LLM router"]
+    LLM["llm-reasoner<br/>FastAPI"]
+    MODEL["LM Studio<br/>Qwen2.5-7B (local)"]
+    PG[("Postgres<br/>shelf_state · events · tasks · llm_calls")]
+    DASH["dashboard<br/>Streamlit ops console"]
+    HUMAN(["Associate"])
+
+    CLOCK --> KAFKA
+    SHOP -->|sales| KAFKA
+    TRUCK -->|receipts, arrivals| KAFKA
+    KAFKA -->|events| DEC
+    DEC -->|"ambiguous ~10%"| LLM
+    LLM --> MODEL
+    DEC <--> PG
+    LLM -->|llm_calls| PG
+    DASH -->|reads state + tasks| PG
+    DASH -->|"confirmations,<br/>trucks, bursts"| KAFKA
+    HUMAN --> DASH
 ```
 
 - **Simulated stores** publish every sale, backroom receipt, and truck arrival
@@ -66,6 +87,39 @@ shoppers + trucks (sim) ──► Redpanda ──► decision service ──► 
 - **LLM reasoner** is a FastAPI service in front of a local model (LM Studio,
   Apple-Silicon MLX). Async, cached, timeout-guarded — it can never block the
   rules fast path.
+
+### The LLM exception path
+
+Rules fire most tasks directly. Only ambiguous cases reach the model, and its
+answer is advisory: `cases_needed()` still computes the final quantity.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant S as Shopper sim
+    participant K as Redpanda
+    participant D as decision-service
+    participant P as Postgres
+    participant L as llm-reasoner
+    participant M as LM Studio
+    participant U as Associate
+
+    S->>K: sale event
+    K->>D: consume event
+    D->>P: upsert shelf_state
+    D->>D: rules engine evaluates trigger
+    Note over D: ambiguous case — promo / bulk / stale-zero
+    D->>P: fetch labeled past same-trigger cases
+    D->>L: POST /reason — state, product, past_cases
+    L->>M: chat completion (JSON mode)
+    M-->>L: verdict + rationale
+    L->>L: validate with Pydantic, clamp guardrails
+    L-->>D: needs_restock, cases_override, confidence, rationale
+    D->>D: cases_needed() owns the final quantity
+    D->>P: emit task or suppress (+ llm_calls row)
+    U->>D: confirm done / adjust / reject
+    D->>P: label outcome — override_rate, regret_rate
+```
 
 ## Quickstart
 
