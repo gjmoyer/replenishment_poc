@@ -13,6 +13,7 @@ import json
 import os
 import time
 import uuid
+from datetime import date as _date
 
 import psycopg
 import streamlit as st
@@ -21,10 +22,14 @@ from kafka import KafkaProducer
 from dashboard.pickutil import merge_newcomers
 from decision.feedback import OVERRIDE_TARGET
 from sim.catalog import build_catalog
+from sim.clock import SIM_DATE
 from sim.clock import fmt as fmt_min
 
 PRODUCTS = {s.sku: s for s in build_catalog(45)}
 THRESHOLDS = {sku: s.threshold_pct for sku, s in PRODUCTS.items()}
+SIM_WEEKDAY = _date.fromisoformat(SIM_DATE).strftime("%a")
+SCENARIO_LABELS = (("promo_rush", "Promo rush"), ("bulk_thrash", "Bulk thrash"),
+                   ("silent_oos", "Silent OOS"), ("receipt_spike", "Receipt spike"))
 
 # --- palette: dark workspace, soft slate surfaces (never bright white) --------
 RED, AMBER, GREEN = "#F2555A", "#F5A524", "#3FAD6E"
@@ -342,7 +347,7 @@ def day_report():
 params = st.query_params
 stores = [r["store_id"] for r in q("SELECT DISTINCT store_id FROM shelf_state ORDER BY 1")]
 if not stores:
-    stores = ["store-001", "store-002"]
+    stores = ["store-001"]
 if "store" not in st.session_state:
     st.session_state.store = params.get("store", stores[0])
 if st.session_state.store not in stores:
@@ -370,6 +375,11 @@ def header():
         if sel != st.session_state.store:
             st.session_state.store = sel
             st.query_params["store"] = sel
+            # The selector lives inside this auto-refreshing fragment, but all
+            # data panels read the module-level `store` bound per full run —
+            # without this, only the header would switch and every panel
+            # would keep showing the old store.
+            st.rerun()
     with c2:
         st.markdown(
             f'<span class="clock">{fmt_min(now_min)}</span> '
@@ -406,8 +416,16 @@ def header():
                 st.session_state.done_tasks = {}
                 st.session_state.skipped = {}
                 st.session_state.adj = {}
+    flags = ctl.get("flags") or {}
+    scen = "".join(f'<span class="pill p-promo">{label}</span>'
+                   for key, label in SCENARIO_LABELS if flags.get(key))
+    if not scen:
+        scen = '<span class="pill p-bulk">Base day</span>'
     st.markdown(
         f'<span class="pill p-bulk">seed:{ctl["seed"]}</span>'
+        f'<span class="pill p-bulk">{SIM_WEEKDAY} {SIM_DATE}</span>'
+        f'<span class="pill p-bulk">Day {ctl.get("epoch", 1)}</span>'
+        f"{scen}"
         f'<span class="pill p-bulk">{"PAUSED" if ctl["paused"] else f"{ctl["speed"]}x"}</span>'
         + ('<span class="pill p-zero">DAY DONE</span>' if ctl["day_done"] else ""),
         unsafe_allow_html=True,
@@ -769,16 +787,21 @@ with right:
         if c3.button("Burst", key="burst_go", disabled=disabled):
             if claim_cmd("burst", {"store_id": store, "sku": bsku, "units": int(bunits)}):
                 st.toast(f"Burst: {bunits} sales on {bsku}")
-        st.caption("Scenarios restart the day with new flags.")
-        s1, s2, s3, s4 = st.columns(4)
-        if s1.button("Promo rush", key="sc_promo", disabled=disabled):
-            claim_cmd("scenario", {"flags": {"promo_rush": True}})
-        if s2.button("Bulk thrash", key="sc_bulk", disabled=disabled):
-            claim_cmd("scenario", {"flags": {"bulk_thrash": True}})
-        if s3.button("Silent OOS", key="sc_silent", disabled=disabled):
-            claim_cmd("scenario", {"flags": {"silent_oos": True}})
-        if s4.button("Receipt spike", key="sc_receipt", disabled=disabled):
-            claim_cmd("scenario", {"flags": {"receipt_spike": True}})
+        st.caption("Scenarios restart the day — mix and match."
+                   " Click again to switch one off.")
+        # Toggle presets: each button flips only its own flag; the runner
+        # merges over current flags, so stacking (and unstacking) composes.
+        _SCEN = (("promo_rush", "Promo rush", "sc_promo"),
+                 ("bulk_thrash", "Bulk thrash", "sc_bulk"),
+                 ("silent_oos", "Silent OOS", "sc_silent"),
+                 ("receipt_spike", "Receipt spike", "sc_receipt"))
+        cur_flags = ctl.get("flags") or {}
+        for (key, label, bkey), col in zip(
+                _SCEN, st.columns(4), strict=True):
+            if col.button(label, key=bkey, disabled=disabled,
+                          type="primary" if cur_flags.get(key) else "secondary"):
+                claim_cmd("scenario",
+                          {"flags": {key: not cur_flags.get(key)}})
 
     inject_panel()
 

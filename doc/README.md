@@ -15,6 +15,8 @@ Split requirements for AI consumption. Read only what you need for the task.
 | `08-dashboard-guide.md` | How to operate the monitor (bars, cards, queue, demo run) | Using the dashboard, giving a demo |
 | `09-simulation-realism.md` | What is knowledge vs invented, calibration worksheet, retune rules | Changing demand, calibrating to real data |
 | `10-session-log.md` | Decisions, incidents, critic history, landmines, resume steps | Resuming work cold, debugging déjà-vu |
+| `11-future-work.md` | Session learnings + prioritized improvement ideas | Planning next work, avoiding re-learned lessons |
+| `12-scalability.md` | 2,000-store × 10K-SKU evaluation, bottlenecks, pilot vs fleet path | Sizing, re-architecture planning |
 
 ## Conventions
 

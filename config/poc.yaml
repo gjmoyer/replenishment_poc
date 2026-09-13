@@ -19,5 +19,7 @@ sim:
   trucks: ["10:30", "14:00"]
   associate_delay_min: 25
   stores:
+    # Single-store demo (Downtown, 1.2x demand — pars are tuned for it).
+    # The stack stays N-store generic: add entries here and every service
+    # (sim, decision, dashboard) picks them up via stores_from_config.
     - { store_id: "store-001", name: "Downtown", rate_mult: 1.2 }
-    - { store_id: "store-002", name: "Suburb", rate_mult: 0.9 }

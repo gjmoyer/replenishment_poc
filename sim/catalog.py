@@ -57,8 +57,8 @@ BASE_FILLERS: tuple[Sku, ...] = (
         pack="16 oz box", price=1.79, margin_pct=0.30),
     Sku("beans-001", "Canned Beans", 36, 12, popularity=5, opening_boh=108,
         pack="15 oz can", price=1.29, margin_pct=0.32),
-    Sku("chips-001", "Chips", 30, 6, popularity=7,
-        profile="evening", opening_boh=130, pack="13 oz bag", price=5.49, margin_pct=0.28),
+    Sku("chips-001", "Chips (PROMO)", 30, 6, is_promo=True, popularity=7,
+        profile="evening", opening_boh=150, pack="13 oz bag", price=5.49, margin_pct=0.28),
     Sku("coffee-001", "Coffee", 20, 5, popularity=9,
         profile="morning", opening_boh=90, pack="12 oz bag", price=11.99, margin_pct=0.30),
 )
@@ -110,8 +110,9 @@ class Store:
 
 STORES: tuple[Store, ...] = (
     Store("store-001", "Downtown", 1.2),
-    Store("store-002", "Suburb", 0.9),
 )
+"""Default demo footprint: one store. Pass explicit stores (or
+stores_from_config) for multi-store runs — DaySim honors any list."""
 
 
 def stores_from_config(entries: tuple[tuple[str, str, float], ...]) -> tuple[Store, ...]:

@@ -1,7 +1,11 @@
 # 03 — Simulation Publishers (Shoppers + Trucks + Clock)
 
 ## Goal
-Run a believable 07:00–22:00 day across 2–3 stores, sped up, with visible restock events on demand.
+Run a believable 07:00–22:00 day for one store (Downtown, 1.2x demand),
+sped up, with visible restock events on demand. The stack stays N-store
+generic (`stores_from_config`) — one store is a demo choice, not a limit:
+stores are fully independent per `(store, sku)` keys, so extra stores add
+volume, not behavior.
 
 ## Sim clock
 - Central `SimClock` service owns sim time. All publishers query it; all events stamp `sim_ts` from it.
@@ -22,12 +26,15 @@ Per basket: pick 1–4 SKUs weighted by SKU `popularity` + promo boost (`is_prom
 SKU catalog for POC (per store, tweakable):
 - `milk-1gal-001` — normal, capacity 24, case 6, popularity high, steady.
 - `soda-12pk-101` — promo, capacity 48, case 12, promo 1.5x capacity, spiky.
+- `chips-001` — promo, capacity 30, case 6, evening-heavy (pairs with soda
+  for the promo-rush event).
 - `dogfood-40lb-007` — bulk, capacity 6, case 2, popularity low but each sale hurts.
 - `bread-loaf-003` — normal, capacity 30, case 10, morning-heavy.
 - `eggs-12ct-005` — normal, capacity 36, case 12, morning-heavy.
 - 15–45 more filler SKUs with randomized params for scale testing.
 
-Each store gets a different seed + rate multiplier (e.g. Downtown 1.2x, Suburb 0.9x) so dashboards diverge.
+Each additional store would get its own seed + rate multiplier so dashboards
+diverge; the default config runs Downtown alone.
 
 ## Receipt / BOH-increase publisher
 Models backroom replenishment from DC, separate from shelf restocking:
@@ -53,7 +60,8 @@ This must NOT auto-fill shelf — shelf only fills on associate confirmation. Te
 - Silent drain zeroes the BUILDING too (correction, not a sale: no velocity pollution), matching the runner. The loop used to zero shelf only — fixed for parity.
 
 ## Scenario presets (one-click)
-- `promo-rush`: 18:00 peak + promo boost 3x → promo exception path.
+- `promo-rush`: 18:00 peak + promo boost 3x on EVERY promo SKU (soda +
+  chips endcap row) → promo exception path.
 - `bulk-thrash-test`: dog food popularity 3x for 2 sim-hours → proves debounce suppresses.
 - `silent-oos`: force one SKU to zero at 13:00 with no further sales → only truck at 14:00 rescues it.
 - `receipt-spike`: large BOH increase mid-day → tests receipt vs shelf distinction.
@@ -62,7 +70,7 @@ This must NOT auto-fill shelf — shelf only fills on associate confirmation. Te
 ```yaml
 seed: 42
 speed: 60
-stores: [store-001, store-002]
+stores: [store-001]
 day: {open: "07:00", close: "22:00"}
 trucks: ["10:30", "14:00"]
 scenarios: []

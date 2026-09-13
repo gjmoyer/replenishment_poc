@@ -70,8 +70,11 @@ decision service and will re-fire if the shelf is still low.
   with the guidance to send an associate instead: they are auto re-checked
   on every truck arrival, but the truck carries nothing they need.
 - **Burst** — force N sales on one SKU to trigger a restock immediately.
-- **Scenario buttons** — restart the day with promo rush, 2h bulk thrash,
-  silent OOS, or receipt spike. Each restarts the day; that is intended.
+- **Scenario buttons** — toggle day flags, then restart the day with the new
+  set: promo rush, 2h bulk thrash, silent OOS, receipt spike. Flags compose,
+  so several can be on at once; the header pills always show the active set.
+  Clicking a lit button switches just that flag off. Each change restarts
+  the day; that is intended.
 - All commands go through the runner one at a time; a "busy, retry" toast
   means a previous command is still being picked up.
 

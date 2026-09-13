@@ -20,8 +20,6 @@ BULK_THRASH_MULT = 3.0
 BULK_THRASH_START_MIN = 10 * 60
 BULK_THRASH_END_MIN = 12 * 60
 SILENT_DRAIN_MIN = 13 * 60
-PROMO_SKU = "soda-12pk-101"
-BULK_SKU = "dogfood-40lb-007"
 
 
 @dataclass
@@ -35,7 +33,8 @@ class ScenarioFlags:
     silent_drain_min: int = SILENT_DRAIN_MIN
 
 
-def profile_mult(profile: str, minute: int, flags: ScenarioFlags, sku: str) -> float:
+def profile_mult(profile: str, minute: int, flags: ScenarioFlags,
+                 is_promo: bool = False, is_bulk: bool = False) -> float:
     """Time-of-day weight multiplier for a SKU profile."""
     if profile == "morning":
         m = MORNING_BOOST if minute < MORNING_CUTOFF_MIN else MORNING_OFF
@@ -46,10 +45,11 @@ def profile_mult(profile: str, minute: int, flags: ScenarioFlags, sku: str) -> f
     else:
         m = 1.0
     rush = PROMO_RUSH_START_MIN <= minute < PROMO_RUSH_END_MIN
-    if flags.promo_rush and sku == PROMO_SKU and rush:
+    # Rush hour lifts the whole promo endcap row, not one SKU (doc/03).
+    if flags.promo_rush and is_promo and rush:
         m *= PROMO_RUSH_MULT
     thrash = BULK_THRASH_START_MIN <= minute < BULK_THRASH_END_MIN
-    if flags.bulk_thrash and sku == BULK_SKU and thrash:
+    if flags.bulk_thrash and is_bulk and thrash:
         m *= BULK_THRASH_MULT
     return m
 

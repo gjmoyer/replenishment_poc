@@ -67,7 +67,8 @@ class ShopperSim:
     def _pick_sku(self, minute: int) -> Sku | None:
         weights = [
             0.0 if muted(s.sku, minute, self.flags)
-            else s.popularity * profile_mult(s.profile, minute, self.flags, s.sku)
+            else s.popularity * profile_mult(s.profile, minute, self.flags,
+                                               s.is_promo, s.is_bulk)
             for s in self.skus
         ]
         total = sum(weights)

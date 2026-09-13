@@ -45,7 +45,6 @@ class SimSettings:
     receipt_cases: int = 4
     stores: tuple[tuple[str, str, float], ...] = (
         ("store-001", "Downtown", 1.2),
-        ("store-002", "Suburb", 0.9),
     )
 
 

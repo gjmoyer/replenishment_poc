@@ -106,13 +106,24 @@ def test_silent_oos_rescued_only_after_truck():
 
 
 def test_two_stores_diverge():
-    _, summary = run()
-    per_store = {}
+    """Multi-store stays supported via explicit store lists (N-store core)."""
+    from sim.catalog import Store
+    from sim.loop import DaySim
+
+    stores = (Store("store-001", "Downtown", 1.2), Store("store-002", "Suburb", 0.9))
+    sim = DaySim(seed=42, flags=ScenarioFlags(), stores=stores, verbose=False)
+    summary = sim.run()
+    per_store: dict[str, int] = {}
     for t in summary.tasks:
-        per_store.setdefault(t.store_id, 0)
-        per_store[t.store_id] += 1
-    assert set(per_store) == {s.store_id for s in STORES}
+        per_store[t.store_id] = per_store.get(t.store_id, 0) + 1
+    assert set(per_store) == {"store-001", "store-002"}
     assert per_store["store-001"] != per_store["store-002"]
+
+
+def test_default_footprint_is_single_store():
+    assert [s.store_id for s in STORES] == ["store-001"]
+    _, summary = run()
+    assert {t.store_id for t in summary.tasks} == {"store-001"}
 
 
 def test_lost_sales_accounting_balances():
@@ -145,9 +156,8 @@ def test_receipt_waves_target_lowest_days_of_supply():
     sim.run()
     # Milk (popularity 20, highest demand) must get at least one receipt;
     # with days-of-supply targeting it is no longer starved by absolute-BOH
-    # ranking (baseline gave store-002 soda zero receipts).
+    # ranking.
     assert receipts[("store-001", "milk-1gal-001")] >= 1
-    assert receipts[("store-002", "milk-1gal-001")] >= 1
 
 
 def test_check_confirm_closes_sibling_open_task_as_done():
@@ -170,3 +180,27 @@ def test_check_confirm_closes_sibling_open_task_as_done():
     assert key not in sim.checks
     assert sim.summary.abandoned_count == aband_before
     assert sim.shelf[key].shelf_est == 36
+
+
+def test_promo_rush_lifts_every_promo_sku():
+    """The rush is an endcap-row event, not a single-SKU boost (doc/03)."""
+    from sim.catalog import build_catalog
+    from sim.scenarios import ScenarioFlags, profile_mult
+
+    flags = ScenarioFlags(promo_rush=True)
+    rush_min = 18 * 60 + 30
+    for s in build_catalog():
+        got = profile_mult(s.profile, rush_min, flags, s.is_promo, s.is_bulk)
+        base = profile_mult(s.profile, rush_min, ScenarioFlags(),
+                            s.is_promo, s.is_bulk)
+        if s.is_promo:
+            assert got == pytest.approx(base * 3.0), s.sku
+        else:
+            assert got == pytest.approx(base), s.sku
+
+
+def test_two_promo_skus_in_catalog():
+    from sim.catalog import build_catalog
+
+    promos = [s.sku for s in build_catalog() if s.is_promo]
+    assert "soda-12pk-101" in promos and "chips-001" in promos
